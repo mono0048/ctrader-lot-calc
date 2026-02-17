@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Chatterbox</title>
+    <title>ALC Open API Spray</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #110;
-            color: #ff0;
+            background: #001;
+            color: #fff;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #ff0;
+            border: 2px solid #fff;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,19 +24,20 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #440;
+            border-bottom: 1px solid #333;
             padding: 4px;
             word-break: break-all;
-            color: #fd0;
         }
 
-        .try {
-            color: #fff;
+        .send {
+            color: #8f8;
         }
 
-        .succ {
-            color: #5f5;
-            background: #242;
+        .hit {
+            color: #0f0;
+            background: #040;
+            font-weight: bold;
+            border: 1px solid #0f0;
         }
     </style>
 
@@ -61,135 +62,103 @@
             if (el) el.textContent = msg;
         };
 
-        // --- HOOK VERIFY ---
-        window.ensureOracle = () => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) return false;
-
-            const desc = Object.getOwnPropertyDescriptor(bridge, 'handleErrorEvent') ||
-                Object.getOwnPropertyDescriptor(Object.getPrototypeOf(bridge), 'handleErrorEvent');
-
-            if (desc) {
-                window.pushLog(`Desc: w=${desc.writable}, c=${desc.configurable}`);
-            } else {
-                window.pushLog("Desc: Not found (on instance or proto)");
-            }
-
-            // Try Hook
-            try {
-                bridge.handleErrorEvent = (err) => {
-                    window.pushLog("!!! ORACLE ERROR !!! " + JSON.stringify(err), "succ");
-                };
-                // Check if stuck
-                if (bridge.handleErrorEvent.toString().includes("ORACLE")) {
-                    window.pushLog("Hook Attached Successfully.", "try");
-                    return true;
-                } else {
-                    window.pushLog("Hook Failed (Native Persistent).");
-                    return false;
-                }
-            } catch (e) {
-                window.pushLog("Hook Err: " + e.message);
-                return false;
-            }
-        };
-
-        // --- CHATTERBOX ---
-        window.chatter = (initMsgId) => {
+        // --- SPRAYER ---
+        window.sprayOpenApi = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            // Extract Account ID
+            // Get ID from URL
             const urlParams = new URLSearchParams(window.location.search);
-            const accId = urlParams.get("id"); // "2614946"
+            const accId = parseInt(urlParams.get("id")) || 2614946;
 
-            window.updateStatus("CHATTERING (Context)...");
+            window.updateStatus("SPRAYING (Open API)...");
 
-            const variants = [
-                // 1. Standard 2001 with Context
+            // 1. Maintain Heartbeat (2001)
+            // Echo the ID to keep the connection happy
+            try {
+                bridge.handlePluginEvent(JSON.stringify({
+                    payloadType: 2001,
+                    clientMsgId: initMsgId,
+                    payload: null
+                }));
+            } catch (e) { }
+
+            // 2. Command List
+            const commands = [
+                // A. ACCOUNT AUTH (2102)
                 {
-                    name: "2001+AccID",
-                    payload: {
-                        payloadType: 2001,
-                        clientMsgId: initMsgId,
-                        payload: { accountId: accId }
-                    }
-                },
-                // 2. Ready State
-                {
-                    name: "Ready",
-                    payload: {
-                        payloadType: 1000, // Guess
-                        clientMsgId: initMsgId,
-                        payload: "ready"
-                    }
-                },
-                {
-                    name: "Type:Ready",
-                    payload: {
-                        type: "ready", // Simple type
-                        accountId: accId
-                    }
-                },
-                // 3. Auth with AccID (2100)
-                {
-                    name: "2100+AccID",
-                    payload: {
-                        payloadType: 2100,
-                        clientMsgId: "auth-" + Date.now(),
+                    name: "2102 (AccAuth)",
+                    json: {
+                        payloadType: 2102,
+                        clientMsgId: "req-" + Date.now(),
                         payload: {
-                            accountId: accId,
-                            token: accId // Try using ID as token
+                            ctidTraderAccountId: accId, // Open API field name
+                            accessToken: "dummy",
+                            accountId: accId // Just in case
                         }
                     }
                 },
-                // 4. Raw Strings
-                { name: "Raw:Ready", custom: "ready" },
-                { name: "Raw:Init", custom: "initialised" }
+                // B. SUBSCRIBE SPOTS (2104) -> If already authed
+                {
+                    name: "2104 (SubSpots)",
+                    json: {
+                        payloadType: 2104,
+                        clientMsgId: "sub-" + Date.now(),
+                        payload: {
+                            ctidTraderAccountId: accId,
+                            symbolId: [1] // EURUSD usually 1
+                        }
+                    }
+                },
+                // C. SYMBOLS LIST (2114)
+                {
+                    name: "2114 (Symbols)",
+                    json: {
+                        payloadType: 2114,
+                        clientMsgId: "sym-" + Date.now(),
+                        payload: { ctidTraderAccountId: accId }
+                    }
+                }
             ];
 
-            let delay = 200;
-            variants.forEach(v => {
+            let delay = 100;
+            commands.forEach(cmd => {
                 setTimeout(() => {
-                    let msg = v.custom ? v.custom : JSON.stringify(v.payload);
                     try {
-                        bridge.handlePluginEvent(msg);
-                        window.pushLog(`>> SENT [${v.name}]`, "try");
+                        bridge.handlePluginEvent(JSON.stringify(cmd.json));
+                        window.pushLog(`>> SENT ${cmd.name}`, "send");
                     } catch (e) { }
                 }, delay);
-                delay += 800;
+                delay += 500;
             });
         };
 
         // --- HANDLER ---
-        window.processedIds = new Set();
+        window.processedHeartbeats = new Set();
+
         window.onHostMessage = (msg) => {
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
-                if (window.processedIds.has(msg.clientMsgId)) return;
-                window.processedIds.add(msg.clientMsgId);
+                // Heartbeat throttle
+                if (window.processedHeartbeats.has(msg.clientMsgId)) return;
+                window.processedHeartbeats.add(msg.clientMsgId);
 
                 window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
 
-                // 1. Verify Oracle
-                if (!window.oracleChecked) {
-                    window.oracleChecked = true;
-                    window.ensureOracle();
-                }
-
-                // 2. Chatter
-                window.chatter(msg.clientMsgId);
+                // Trigger Spray
+                window.sprayOpenApi(msg.clientMsgId);
             }
-            else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType === 2500) {
-                window.updateStatus("!!! SUCCESS !!!");
-                window.pushLog(`!!! HIT !!! RECV ${msg.payloadType}`, "succ");
+            else {
+                // VICTORY CONDITION
+                window.updateStatus("!!! SUCCESS !!! RESPONSE RECV !!!");
+                window.pushLog(`!!! HIT !!! RECV ${msg.payloadType}: ${JSON.stringify(msg)}`, "hit");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v29: Chatterbox");
+            window.pushLog("Inspector v30: Open API ID Test");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -200,7 +169,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v29: AccountID & Keywords
+        Inspector v30: Protocol Mapping
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
