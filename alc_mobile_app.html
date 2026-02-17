@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v6.0</title>
+    <title>Auto Lot Calc v6.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -91,6 +91,31 @@
             box-shadow: none;
         }
 
+        .toggle-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 5px;
+        }
+
+        .toggle-btn {
+            flex: 1;
+            padding: 8px;
+            font-size: 12px;
+            background: #333;
+            border: 1px solid #444;
+            color: #888;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .toggle-btn.active {
+            background: #448aff;
+            color: #fff;
+            border-color: #448aff;
+            font-weight: bold;
+        }
+
         #log {
             display: block;
             font-size: 10px;
@@ -99,7 +124,7 @@
             margin-top: 20px;
             border-top: 1px solid #333;
             padding-top: 10px;
-            height: 150px;
+            height: 100px;
             overflow-y: auto;
         }
 
@@ -141,12 +166,15 @@
         const App = {
             account: "---",
             balance: 0,
-            currency: "???", // Default to ??? to force check
+            currency: "Loading...",
+            assetId: null,
+            assets: {}, // id -> {name, digits}
             allSymbols: [],
             symbol: null,
             price: 0,
             volCents: 0,
-            volLots: 0
+            volLots: 0,
+            showFavs: false
         };
 
         const Tunnel = {
@@ -193,20 +221,34 @@
             start: () => {
                 document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
-                Tunnel.send(175, {}, res => {
-                    // DEBUG: Log Account to find Currency
-                    UI.log("AccRes: " + JSON.stringify(res));
 
-                    const t = P(res, "trader");
-                    if (t) {
-                        App.account = P(t, "login");
-                        App.balance = (P(t, "balance") || 0) / 100;
-                        App.currency = P(res, "depositCurrency") || "USD";
-
-                        // Force JPY override if name suggests?
-                        UI.updateAcc();
-                        Logic.loadSyms();
+                // 1. Fetch Asset List (2126) first to map IDs
+                Tunnel.send(2126, {}, res => {
+                    const list = P(res, "asset");
+                    if (list) {
+                        list.forEach(a => {
+                            App.assets[P(a, "assetId")] = { name: P(a, "name"), digits: P(a, "digits") };
+                        });
+                        UI.log(`Assets Loaded: ${list.length}`);
                     }
+
+                    // 2. Fetch Account
+                    Tunnel.send(175, {}, res => {
+                        const t = P(res, "trader");
+                        if (t) {
+                            App.account = P(t, "login");
+                            App.balance = (P(t, "balance") || 0) / 100;
+                            App.assetId = P(res, "depositAssetId") || 1; // Default USD
+
+                            // Resolve Name
+                            const a = App.assets[App.assetId];
+                            if (a) App.currency = a.name; // "JPY"
+                            else App.currency = "ID:" + App.assetId;
+
+                            UI.updateAcc();
+                            Logic.loadSyms();
+                        }
+                    });
                 });
             },
 
@@ -216,7 +258,12 @@
                     if (s) {
                         s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
                         App.allSymbols = s;
-                        UI.filterSyms("JPY");
+                        // Check if first symbol has 'favorite' to decide default
+                        if (s.length > 0 && P(s[0], "favorite")) {
+                            UI.toggleFav(true); // Default to favs if available
+                        } else {
+                            UI.filterSyms("");
+                        }
                     }
                 });
             },
@@ -227,12 +274,7 @@
                     if (l && l[0]) {
                         App.symbol = l[0];
                         App.symbol.id = id;
-
-                        // --- DYNAMIC DATA v6.0 ---
-                        const stepCents = P(App.symbol, "stepVolume") || 100000;
-                        App.symbol._step = stepCents; // Keep in Cents for calculation logic
-
-                        UI.log(`Sel: ${P(App.symbol, "name")} Fav:${P(App.symbol, "favorite")} Lot:${P(App.symbol, "lotSize")}`);
+                        App.symbol._step = P(App.symbol, "stepVolume") || 100000;
 
                         Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
@@ -260,59 +302,40 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                // --- FULLY DYNAMIC PIP VALUE ---
-                const lotCents = P(App.symbol, "lotSize") || 10000000; // 100k units * 100
+                const lotCents = P(App.symbol, "lotSize") || 10000000;
                 const lotUnits = lotCents / 100;
-
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
-                const pipSize = Math.pow(10, -pipPos); // e.g. 10^-2 = 0.01
+                const pipSize = Math.pow(10, -pipPos);
 
-                // Value per Lot in QUOTE Currency
                 const pipValQuote = lotUnits * pipSize;
 
-                // Convert to Account Currency
                 const sym = P(App.symbol, "name").toUpperCase();
                 const acc = App.currency.toUpperCase();
 
-                let finalPipVal = 10; // Default fallback
+                let finalPipVal = 10;
 
-                // Logic:
-                // 1. If Account matches Quote (e.g. Acc=JPY, Pair=USDJPY) -> No Conv (pipValQuote)
-                // 2. If Account matches Base (e.g. Acc=USD, Pair=USDJPY) -> pipValQuote / Price
-                // 3. If Account is neither (e.g. Acc=USD, Pair=EURJPY) -> pipValQuote (JPY) * JPYUSD_Rate.
-
-                // Detection:
+                // Refined Conversion Logic v6.1
                 if (sym.endsWith(acc)) {
-                    // Quote is Account
                     finalPipVal = pipValQuote;
                 } else if (sym.startsWith(acc)) {
-                    // Base is Account. (e.g. USDJPY, Acc=USD). Quote is JPY.
-                    // We have pipVal in JPY. We need USD. 
-                    // 1 USD = Price JPY. -> 1 JPY = 1/Price USD.
                     finalPipVal = pipValQuote / App.price;
                 } else {
-                    // Cross. Hard/Imprecise without rate.
-                    // e.g. EURUSD on JPY Account.
-                    // Quote is USD. We need JPY.
-                    // Scan for "USDJPY" rate? Or assume fixed?
-                    // For this version, fallback to 1000 if JPY, 10 if USD.
-                    finalPipVal = (acc === "JPY") ? 1000 : 10;
+                    // Approximate for JPY/USD accs
+                    if (acc === "JPY") finalPipVal = 1000;
+                    else finalPipVal = 10;
                 }
 
-                // Calculate
                 const lots = riskAmt / (sl * finalPipVal);
 
-                // Normalize to Step (Cents)
-                let unitsCents = lots * lotCents; // Target Cents
+                let unitsCents = lots * lotCents;
                 const stepCents = App.symbol._step || 100000;
-
                 unitsCents = Math.floor(unitsCents / stepCents) * stepCents;
 
                 App.volCents = unitsCents;
-                App.volLots = unitsCents / lotCents; // Display Lots matches LotSize
+                App.volLots = unitsCents / lotCents;
 
-                UI.updateCalc(riskAmt, finalPipVal);
+                UI.updateCalc(riskAmt);
             },
 
             trade: () => {
@@ -337,19 +360,32 @@
         };
 
         const UI = {
+            toggleFav: (force) => {
+                if (force !== undefined) App.showFavs = force;
+                else App.showFavs = !App.showFavs;
+
+                document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
+                document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
+
+                UI.filterSyms(document.getElementById('sym_filter').value);
+            },
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.account;
-                document.getElementById('acc_bal').textContent = App.balance.toLocaleString() + " " + App.currency;
+                document.getElementById('acc_bal').textContent = Math.floor(App.balance).toLocaleString() + " " + App.currency;
             },
             filterSyms: (txt) => {
                 const s = document.getElementById('sym_select');
                 s.innerHTML = "";
                 const term = (txt || "").toUpperCase();
 
-                // Future: filter by favorites if we can map IDs
-                const matches = App.allSymbols.filter(x => P(x, "name").toUpperCase().includes(term));
+                let matches = App.allSymbols;
+                // Filter by ID or Name
+                if (term) matches = matches.filter(x => P(x, "name").toUpperCase().includes(term));
 
-                matches.slice(0, 50).forEach(i => {
+                // Filter by Fav
+                if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
+
+                matches.slice(0, 100).forEach(i => {
                     const o = document.createElement('option');
                     o.value = P(i, "id");
                     o.text = P(i, "name");
@@ -357,13 +393,10 @@
                 });
             },
             updatePrice: () => document.getElementById('lbl_price').textContent = App.price.toFixed(3),
-            updateCalc: (risk, pv) => {
+            updateCalc: (risk) => {
                 document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
                 document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + App.currency;
                 document.getElementById('btn_trade').disabled = (App.volCents <= 0);
-
-                // Debug info
-                // document.getElementById('debug_pv').textContent = "PV: " + pv.toFixed(2);
             },
             showModal: (title, msg) => {
                 const m = document.getElementById('modal');
@@ -375,7 +408,7 @@
             },
             log: (t) => {
                 const l = document.getElementById('log');
-                l.textContent = t + "\n" + l.textContent.substring(0, 2000);
+                l.textContent = t + "\n" + l.textContent.substring(0, 500);
             }
         };
 
@@ -386,7 +419,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v6.0</div>
+                style="color:#fff">CALC</span> v6.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -405,7 +438,11 @@
 
     <div class="card">
         <span class="label">Trading Pair</span>
-        <input type="text" id="sym_filter" placeholder="Search (e.g. USDJPY)...">
+        <div class="toggle-row">
+            <div id="btn_all" class="toggle-btn active" onclick="UI.toggleFav(false)">ALL</div>
+            <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
+        </div>
+        <input type="text" id="sym_filter" placeholder="Search...">
         <select id="sym_select" size="5" onchange="Logic.selectSym(parseInt(this.value))"></select>
 
         <div style="margin-top:10px; text-align:center;">
@@ -434,7 +471,7 @@
         <button id="btn_trade" class="trade" disabled>Place Order</button>
     </div>
 
-    <div id="log">Debug Info...</div>
+    <div id="log">Logs...</div>
     <div id="modal">
         <div class="modal-content"></div>
     </div>
