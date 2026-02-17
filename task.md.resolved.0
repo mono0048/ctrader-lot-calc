@@ -1,0 +1,6 @@
+# Port AutoLotCalculator.mq5 to cTrader
+
+- [ ] Analyze MQL5 code logic <!-- id: 0 -->
+- [ ] Create implementation plan for cTrader port <!-- id: 1 -->
+- [ ] Write cTrader (C#) code <!-- id: 2 -->
+- [ ] Create walkthrough for user <!-- id: 3 -->

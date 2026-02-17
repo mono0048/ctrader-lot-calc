@@ -1,0 +1,6 @@
+{
+  "artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary": "Revised WebView Plugin Implementation Plan. Confirmed mobile supports dragging chart lines. Key mechanism: C# listens to `Chart.ObjectsUpdated` to detect line drags and pushes new values to WebView. WebView also has +/- buttons for fine-tuning.",
+  "updatedAt": "2026-02-16T23:39:38.270554500Z",
+  "version": "1"
+}

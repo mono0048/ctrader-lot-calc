@@ -1,0 +1,60 @@
+# WebView Plugin Implementation Plan for AutoLotCalculator
+
+## Goal
+Convert the existing cBot into a **cTrader WebView Plugin** that works on both Desktop and **Mobile (iOS/Android)**.
+Since direct chart interaction (dragging lines) is limited or unavailable on mobile native charts, the UI will be redesigned to handle all inputs within the WebView panel.
+
+## Architecture: Hybrid (C# + HTML/JS)
+- **Frontend (WebView)**: 
+    - HTML5/CSS3 for responsive UI (Bootstrap or custom CSS).
+    - JavaScript for user interaction (sliders for SL/TP distance, risk %, buttons).
+    - Communicates with C# backend via `window.chrome.webview.postMessage`.
+- **Backend (C# cAlgo)**:
+    - Handles trading logic (balance check, lot calculation, order execution).
+    - Receives commands from JS (e.g., "CalculateLot", "PlaceOrder").
+    - Sends updates to JS (e.g., current price, calculated lot size, order status).
+
+## User Interface Design (Mobile-First)
+- **Risk Setting**: Slider or Input for Risk % (0.1% - 5.0%).
+- **Stop Loss (SL)**: 
+    - Slider for Distance (Pips) [e.g. 5 - 100 pips].
+    - Input field for exact price (optional).
+- **Take Profit (TP)**: 
+    - Risk:Reward Ratio Slider [e.g. 1:1 - 1:5].
+    - Auto-calculation based on SL distance.
+- **Entry Mode**: Switch between "Market" and "Pending".
+- **Action Buttons**: 
+    - "Buy" / "Sell" with calculated lot size display.
+    - "Close All" button.
+- **Info Display**: Risk Amount, Lot Size, Win Rate (from history).
+
+## Technical Implementation Steps
+
+### 1. Create HTML/CSS/JS Assets
+- Develop `index.html` with the UI components.
+- Embed these assets into the C# [OnStart](file:///C:/Users/jf08/.gemini/antigravity/brain/4ed089b8-5f02-4200-a967-79e572b525cf/AutoLotCalculator.cs#83-104) method as a string (for single-file distribution) or load from local files.
+
+### 2. Implement C# Backend (Plugin)
+- Initialize WebView in [OnStart](file:///C:/Users/jf08/.gemini/antigravity/brain/4ed089b8-5f02-4200-a967-79e572b525cf/AutoLotCalculator.cs#83-104).
+- Implement `OnMessageReceived` to handle JS commands:
+    - `CALC`: Update lot size based on received SL pips/price.
+    - `ORDER`: Execute order with received parameters.
+    - `CLOSE`: Close all positions.
+- Implement [OnTick](file:///C:/Users/jf08/.gemini/antigravity/brain/4ed089b8-5f02-4200-a967-79e572b525cf/AutoLotCalculator.cs#116-124) / `OnBar`:
+    - Send `PRICE_UPDATE` to JS to refresh current price display.
+
+### 3. Implement JS Frontend Logic
+- Event listeners for sliders/inputs.
+- Send `CALC` message to C# whenever inputs change.
+- Handle `PRICE_UPDATE` to show real-time Bid/Ask.
+- Handle `ORDER_RESULT` to show success/failure alerts.
+
+## Verification
+- **Desktop**: Verify WebView loads and communicates with cBot.
+- **Mobile (Simulator/Real)**: Verify UI responsiveness and layout on small screens.
+- **Functionality**: Ensure lot calculation matches the original logic.
+
+## Note on Chart Interaction
+On mobile, users cannot drag lines on the chart to set SL/TP for the cBot to read. 
+Therefore, **SL/TP must be set via the WebView UI (Pips or Price)**. 
+- *Option*: We can still draw "visual-only" lines on the chart from C# to show where the SL/TP *would* be, based on the WebView settings.

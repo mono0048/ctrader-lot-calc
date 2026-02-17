@@ -1,0 +1,32 @@
+# AutoLotCalculator cTrader移植タスク
+
+- [x] MQL5コードの仕様解析 <!-- id: 0 -->
+- [x] 移植計画の作成（cTrader APIへのマッピング） <!-- id: 1 -->
+- [/] cTrader (C#) コードの実装 <!-- id: 2 -->
+    - [x] UIコントロール（パネル、ボタン）の実装
+    - [x] チャートライン（SL/TP/Entry）の実装とイベントハンドリング
+    - [x] ロット計算ロジック（リスク％、期待値）の移植
+    - [x] 注文実行ロジックの実装
+- [x] cTraderでの動作検証
+    - [x] デモ口座での稼働テスト
+    - [x] ロット計算の正確性確認
+    - [x] 注文実行（成行・指値）の確認
+    - [x] [追加] ATRを用いた初期ライン位置の自動調整機能
+- [x] ユーザー向けウォークスルー（利用ガイド）の作成 <!-- id: 3 -->
+
+# WebView Plugin化 (Mobile対応)
+- [x] WebView版ハイブリッドコードの実装 (Mobile非対応のため中止) <!-- id: 4 -->
+- [x] SDKベース (Pure JS) WebView Pluginの実装 ([alc_sdk.html](file:///C:/Users/jf08/.gemini/antigravity/brain/4ed089b8-5f02-4200-a967-79e572b525cf/alc_sdk.html)) <!-- id: 5 -->
+    - [x] React & Spotware SDK (esm.sh) の統合
+    - [x] アカウント情報・シンボル情報の自動取得
+    - [x] 注文実行機能 (Market Order) の実装
+    - [x] ロット計算ロジックのJS移植
+- [/] デプロイと動作検証 <!-- id: 6 -->
+    - [ ] Webホスティング (Netlify/GitHub Pages) へのアップロード
+    - [ ] 実機 (cTrader Mobile) での動作確認
+        - [x] Analyze `handlePluginEvent` source (Native confirmed)
+        - [x] Verify Native Return Value & Universal Event Trap (Failed)
+        - [x] Fuzz Protocol Envelopes (Failed)
+        - [ ] Search specifically for "EventBasedPluginJavaScriptBridge"
+        - [ ] Verify Connection w/ Callback Injection
+        - [ ] Verify Trading functionality

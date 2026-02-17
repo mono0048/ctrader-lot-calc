@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>ALC Protocol Spray</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <style>
+        body {
+            background: #000;
+            color: #fff;
+            font-family: monospace;
+            padding: 10px;
+        }
+
+        .status {
+            padding: 10px;
+            border: 1px solid #444;
+            margin-bottom: 10px;
+            font-weight: bold;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .log {
+            font-size: 10px;
+            border-bottom: 1px solid #333;
+            padding: 2px;
+            word-break: break-all;
+        }
+    </style>
+
+    <script>
+        // --- UTILS ---
+        window.logBuffer = [];
+        window.pushLog = (msg) => {
+            const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
+            window.logBuffer.unshift(line);
+            console.log(line);
+            const el = document.getElementById('logs');
+            if (el) {
+                const div = document.createElement('div');
+                div.className = "log";
+                div.textContent = line;
+                el.insertBefore(div, el.firstChild);
+            }
+        };
+
+        window.updateStatus = (msg, className) => {
+            const el = document.getElementById('status');
+            if (el) {
+                el.textContent = msg;
+                if (className) el.className = "status " + className;
+            }
+        };
+
+        // --- STATE ---
+        window.lastMsgId = null;
+        window.hasHandshook = false;
+        window.sprayCount = 0;
+
+        // --- SPRAYER ---
+        window.sprayResponse = (basePayload) => {
+            window.pushLog("!!! STARTING SPRAY !!!");
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            const android = window.android;
+
+            // 1. Bridge Handle (Object)
+            if (bridge && bridge.handlePluginEvent) {
+                try {
+                    bridge.handlePluginEvent(basePayload);
+                    window.pushLog(">> STAY [1] Bridge.handle(Obj)");
+                } catch (e) { window.pushLog("ERR [1]: " + e.message); }
+
+                // 2. Bridge Handle (String)
+                try {
+                    bridge.handlePluginEvent(JSON.stringify(basePayload));
+                    window.pushLog(">> STAY [2] Bridge.handle(Str)");
+                } catch (e) { window.pushLog("ERR [2]: " + e.message); }
+            }
+
+            // 3. Android Interface (if exists)
+            if (android) {
+                window.pushLog(">> STAT [3] Found 'window.android'");
+                // Try common methods
+                const methods = ['handlePluginEvent', 'send', 'postMessage', 'receive'];
+                methods.forEach(m => {
+                    if (typeof android[m] === 'function') {
+                        try {
+                            android[m](JSON.stringify(basePayload));
+                            window.pushLog(`>> STAY [3a] android.${m}(Str)`);
+                        } catch (e) { }
+                        try {
+                            android[m](basePayload);
+                            window.pushLog(`>> STAY [3b] android.${m}(Obj)`);
+                        } catch (e) { }
+                    }
+                });
+            }
+
+            // 4. Dispatch Event (MessageEvent)
+            try {
+                window.dispatchEvent(new MessageEvent('message-to-host', { data: basePayload }));
+                window.pushLog(">> STAY [4] dispatch(MessageEvent)");
+            } catch (e) { window.pushLog("ERR [4]: " + e.message); }
+
+            // 5. Dispatch Event (CustomEvent)
+            try {
+                window.dispatchEvent(new CustomEvent('message-to-host', { detail: basePayload }));
+                window.pushLog(">> STAY [5] dispatch(CustomEvent)");
+            } catch (e) { window.pushLog("ERR [5]: " + e.message); }
+
+            // 6. Parent PostMessage (Sample Code)
+            try {
+                window.parent.postMessage(basePayload, "*");
+                window.pushLog(">> STAY [6] parent.postMessage(Obj)");
+            } catch (e) { window.pushLog("ERR [6]: " + e.message); }
+
+            // 7. Window PostMessage
+            try {
+                window.postMessage(basePayload, "*");
+                window.pushLog(">> STAY [7] window.postMessage(Obj)");
+            } catch (e) { }
+
+            window.pushLog("!!! SPRAY COMPLETE !!!");
+        };
+
+        // --- LOGIC ---
+        window.onHostMessage = (msg) => {
+            if (!msg) return;
+            const type = msg.payloadType;
+
+            // 2000 -> SPRAY 2001
+            if (type === 2000) {
+                if (window.hasHandshook) {
+                    window.pushLog("Ignored Dup 2000");
+                    return;
+                }
+                window.hasHandshook = true;
+                window.lastMsgId = msg.clientMsgId;
+                window.pushLog(`<< RECV 2000 (ID: ${window.lastMsgId})`);
+                window.updateStatus("HANDSHAKE RECEIVED! SPRAYING...", "pending");
+
+                // PREPARE CONFIRM PAYLOAD
+                const confirmPayload = {
+                    payloadType: 2001,
+                    clientMsgId: window.lastMsgId, // Echo
+                    payload: {}
+                };
+
+                setTimeout(() => {
+                    window.sprayResponse(confirmPayload);
+                    window.updateStatus("SPRAYED. WAITING FOR DATA...", "pending");
+
+                    // AUTO AUTH SPRAY (After 1s)
+                    setTimeout(window.doAuthSpray, 1000);
+                }, 50);
+            }
+            else if (type === 2101 || type === 2102 || type === 2100) {
+                window.updateStatus("CONNECTED! DATA RECV", "success");
+                window.pushLog(`<< DATA ${type}: ` + JSON.stringify(msg).substring(0, 50));
+            }
+            else {
+                window.pushLog(`<< RECV UNKNOWN ${type}`);
+            }
+        };
+
+        window.doAuthSpray = () => {
+            const reqId = "auth-" + Date.now();
+            const authPayload = {
+                payloadType: 2100,
+                clientMsgId: reqId,
+                payload: {
+                    payloadType: 175,
+                    clientMsgId: reqId
+                }
+            };
+            window.pushLog(">> SPRAYING AUTH (2100)...");
+            window.sprayResponse(authPayload);
+        };
+
+        // --- SETUP ---
+        window.onload = () => {
+            // Inspect Android
+            if (window.android) {
+                window.pushLog("FOUND WINDOW.ANDROID keys: " + Object.keys(window.android).join(', '));
+            } else {
+                window.pushLog("window.android NOT FOUND");
+            }
+
+            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
+            window.addEventListener('message', (e) => {
+                if (e.data && e.data.payloadType) window.onHostMessage(e.data);
+            });
+        };
+
+    </script>
+</head>
+
+<body>
+    <div id="status" class="status">WAITING FOR host (2000)...</div>
+
+    <p style="font-size:12px; text-align:center; color:#aaa;">
+        Inspector v16: Protocol Spray
+    </p>
+
+    <button onclick="window.doAuthSpray()" style="background:#004488; color:white;">FORCE AUTH SPRAY</button>
+
+    <div id="logs" style="margin-top:10px;"></div>
+
+    <script>
+        // Late log flush
+        setTimeout(() => {
+            if (window.logBuffer.length > 0) {
+                const el = document.getElementById('logs');
+                if (el && el.innerHTML === "") {
+                    window.logBuffer.forEach(l => {
+                        const d = document.createElement('div');
+                        d.className = "log";
+                        d.textContent = l;
+                        el.appendChild(d);
+                    });
+                }
+            }
+        }, 500);
+    </script>
+</body>
+
+</html>

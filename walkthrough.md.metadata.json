@@ -1,0 +1,6 @@
+{
+  "artifactType": "ARTIFACT_TYPE_WALKTHROUGH",
+  "summary": "Updated walkthrough with instructions for the new SDK-based WebView Plugin. Includes deployment steps for Netlify/GitHub Pages.",
+  "updatedAt": "2026-02-17T00:40:32.481967800Z",
+  "version": "1"
+}

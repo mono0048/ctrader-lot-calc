@@ -1,0 +1,64 @@
+# Implementation Plan - AutoLotCalculator Port to cTrader
+
+Port existing MQL5 utility EA "AutoLotCalculator" to cTrader (cBot) using C#.
+The bot assists with manual trading by providing visual lines for SL/TP/Entry strategies and calculating appropriate lot sizes based on risk percentage.
+
+## User Review Required
+> [!NOTE]
+> The UI will be implemented using cTrader's modern `Chart.Controls` API, which creates genuine UI controls (Buttons, TextBlocks) overlaying the chart, rather than using Chart Objects (like MQL5's `OBJ_BUTTON`). This allows for a cleaner and more responsive interface but may look slightly different than the original.
+
+## Proposed Changes
+
+### [NEW] AutoLotCalculator.cs
+Create a new cBot source file.
+
+#### Class Structure
+- Inherit from `Robot`
+- **Parameters**: `RiskPercentage`, `Slippage`, `MagicNumber` (Label in cTrader).
+- **State Variables**: `TradeMode` (Market/Pending), `IsSplitEntry` etc.
+- **UI Controls**: Panels, Buttons, TextBlocks for the dashboard.
+
+#### Key Methods Mapping
+| MQL5 Function | cTrader Equivalent / Implementation |
+| :--- | :--- |
+| `OnInit` | `OnStart`: Initialize UI, create initial lines, subscribe to events. |
+| `OnDeinit` | `OnStop`: Remove UI controls and chart lines. |
+| `OnChartEvent` (Click) | `Button.Click` events for UI. |
+| `OnChartEvent` (Drag) | `Chart.ObjectUpdated` event to detect line movement. |
+| `CalculateTradingValues` | Same logic, using `Account.Balance`, `Symbol.PipSize`, `Symbol.TickValue`. |
+| `SendMarketOrder...` | `ExecuteMarketOrder`. |
+| `SendPendingOrder...` | `PlaceLimitOrder` / `PlaceStopOrder`. |
+| `CalculateWinRate`/`EV` | Iterate `History` collection in cTrader. |
+
+#### Visual Elements
+- **Interactive Lines**:
+  - `SL Line`: Horizontal Line (Red/Orange), draggable.
+  - `TP Line`: Horizontal Line (Blue/Cyan), draggable.
+  - `Entry Line`: Horizontal Line (Gold), draggable (only in Pending mode).
+- **Dashboard**:
+  - A panel on the chart (top-left) containing:
+    - Toggle Buttons: UI Hide/Show, Mode (Market/Pending), Split Entry.
+    - Action Buttons: Full/Half/Third Entry, Close All.
+    - Labels: Risk, Price, SL Pips, WinRate, EV, RR Ratio.
+
+## Verification Plan
+
+### Manual Verification
+Since I cannot run cTrader to verify, the user will need to:
+1.  Open cTrader and create a new cBot named "AutoLotCalculator".
+2.  Copy-paste the generated code.
+3.  Build the bot.
+4.  Add an instance to a chart.
+5.  **Test UI**:
+    - Click "UI Toggle" -> UI should hide/show.
+    - Click "Mode" -> Switch between Market/Pending.
+    - Check if SL/TP lines appear. drag them and see if "SL Pips" / "Risk" labels update.
+6.  **Test Trading**:
+    - **Market Mode**: Align SL line. Click "Full Entry". Check if a position is opened with correct StopLoss and Lot size matching the Risk %.
+    - **Pending Mode**: Switch mode. Align Entry and SL/TP lines. Click "Full Entry". Check if Limit/Stop order is placed.
+7.  **Test Split/Close**:
+    - Test "Half Entry" buttons.
+    - Test "Close All" button.
+
+### Automated Tests
+*Not applicable for cTrader cBots within this environment.*
