@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Open API Spray</title>
+    <title>ALC Type Scanner</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #001;
-            color: #fff;
+            background: #000;
+            color: #aaa;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #fff;
+            border: 2px solid #aaa;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -27,17 +27,18 @@
             border-bottom: 1px solid #333;
             padding: 4px;
             word-break: break-all;
-        }
-
-        .send {
-            color: #8f8;
+            white-space: nowrap;
+            overflow: hidden;
         }
 
         .hit {
             color: #0f0;
             background: #040;
             font-weight: bold;
-            border: 1px solid #0f0;
+        }
+
+        .scan {
+            color: #555;
         }
     </style>
 
@@ -62,103 +63,91 @@
             if (el) el.textContent = msg;
         };
 
-        // --- SPRAYER ---
-        window.sprayOpenApi = (initMsgId) => {
+        // --- SCANNER ---
+        window.scanTypes = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            // Get ID from URL
-            const urlParams = new URLSearchParams(window.location.search);
-            const accId = parseInt(urlParams.get("id")) || 2614946;
+            window.updateStatus("SCANNING TYPES (2000-2200)...");
 
-            window.updateStatus("SPRAYING (Open API)...");
-
-            // 1. Maintain Heartbeat (2001)
-            // Echo the ID to keep the connection happy
-            try {
-                bridge.handlePluginEvent(JSON.stringify({
-                    payloadType: 2001,
-                    clientMsgId: initMsgId,
-                    payload: null
-                }));
-            } catch (e) { }
-
-            // 2. Command List
-            const commands = [
-                // A. ACCOUNT AUTH (2102)
-                {
-                    name: "2102 (AccAuth)",
-                    json: {
-                        payloadType: 2102,
-                        clientMsgId: "req-" + Date.now(),
-                        payload: {
-                            ctidTraderAccountId: accId, // Open API field name
-                            accessToken: "dummy",
-                            accountId: accId // Just in case
-                        }
-                    }
-                },
-                // B. SUBSCRIBE SPOTS (2104) -> If already authed
-                {
-                    name: "2104 (SubSpots)",
-                    json: {
-                        payloadType: 2104,
-                        clientMsgId: "sub-" + Date.now(),
-                        payload: {
-                            ctidTraderAccountId: accId,
-                            symbolId: [1] // EURUSD usually 1
-                        }
-                    }
-                },
-                // C. SYMBOLS LIST (2114)
-                {
-                    name: "2114 (Symbols)",
-                    json: {
-                        payloadType: 2114,
-                        clientMsgId: "sym-" + Date.now(),
-                        payload: { ctidTraderAccountId: accId }
-                    }
-                }
+            // Ranges to scan
+            const ranges = [
+                { start: 0, end: 50 },
+                { start: 1000, end: 1010 },
+                { start: 2000, end: 2200 }
             ];
 
-            let delay = 100;
-            commands.forEach(cmd => {
-                setTimeout(() => {
-                    try {
-                        bridge.handlePluginEvent(JSON.stringify(cmd.json));
-                        window.pushLog(`>> SENT ${cmd.name}`, "send");
-                    } catch (e) { }
-                }, delay);
-                delay += 500;
+            let queue = [];
+            ranges.forEach(r => {
+                for (let i = r.start; i <= r.end; i++) {
+                    queue.push(i);
+                }
             });
+
+            const batchSize = 10;
+            let index = 0;
+
+            const processBatch = () => {
+                if (index >= queue.length) {
+                    window.pushLog("SCAN COMPLETE", "hit");
+                    return;
+                }
+
+                for (let k = 0; k < batchSize && index < queue.length; k++) {
+                    const type = queue[index++];
+                    try {
+                        const msg = {
+                            payloadType: type,
+                            clientMsgId: "scan-" + type,
+                            payload: {} // Empty payload
+                        };
+                        bridge.handlePluginEvent(JSON.stringify(msg));
+                        // window.pushLog(`Sent ${type}`, "scan"); // Too spammy
+                    } catch (e) { }
+                }
+
+                setTimeout(processBatch, 20); // Fast cycle
+            };
+
+            processBatch();
         };
 
         // --- HANDLER ---
-        window.processedHeartbeats = new Set();
-
+        window.scanned = false;
         window.onHostMessage = (msg) => {
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
-                // Heartbeat throttle
-                if (window.processedHeartbeats.has(msg.clientMsgId)) return;
-                window.processedHeartbeats.add(msg.clientMsgId);
+                if (!window.scanned) {
+                    window.scanned = true;
+                    window.pushLog(`<< RECV 2000. Start Scan.`);
+                    window.scanTypes(msg.clientMsgId);
+                }
+            }
+            else if (msg.payloadType === 2500) {
+                // ERROR RESPONSE
+                // Analyze the error message
+                const txt = msg.payload || "";
+                const type = msg.clientMsgId.replace("scan-", "");
 
-                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
-
-                // Trigger Spray
-                window.sprayOpenApi(msg.clientMsgId);
+                if (txt.includes("Unsupported")) {
+                    // Boring, ignore or sparse log
+                    // window.pushLog(`${type}: Unsupported`, "scan");
+                } else {
+                    // INTERESTING!
+                    window.pushLog(`!!! HIT [${type}] !!!: ${txt}`, "hit");
+                }
             }
             else {
-                // VICTORY CONDITION
-                window.updateStatus("!!! SUCCESS !!! RESPONSE RECV !!!");
-                window.pushLog(`!!! HIT !!! RECV ${msg.payloadType}: ${JSON.stringify(msg)}`, "hit");
+                // SUCCESS RESPONSE?
+                window.updateStatus("!!! SUCCESS !!!");
+                window.pushLog(`!!! RESPONSE [${msg.payloadType}] !!!: ${JSON.stringify(msg)}`, "hit");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v30: Open API ID Test");
+            window.pushLog("Inspector v31: Type Brute Force");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -169,7 +158,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v30: Protocol Mapping
+        Inspector v31: Finding Valid IDs
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
