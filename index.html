@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Smart Mapper</title>
+    <title>ALC Tunnel Borer</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #aaa;
+            background: #002;
+            color: #fa0;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #aaa;
+            border: 2px solid #fa0;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,9 +24,13 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid #420;
             padding: 4px;
             word-break: break-all;
+        }
+
+        .try {
+            color: #fff;
         }
 
         .hit {
@@ -35,27 +39,21 @@
             font-weight: bold;
             border: 1px solid #0f0;
         }
-
-        .map {
-            color: #fb0;
-        }
-
-        .unique {
-            color: #aaf;
-        }
     </style>
 
     <script>
         // --- UTILS ---
+        window.logBuffer = [];
         window.pushLog = (msg, type) => {
+            const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
+            window.logBuffer.unshift({ t: line, c: type });
+            console.log(line);
             const el = document.getElementById('logs');
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.textContent = msg; // Text only to be safe
+                div.textContent = line;
                 el.insertBefore(div, el.firstChild);
-                // Limit history
-                if (el.children.length > 100) el.removeChild(el.lastChild);
             }
         };
 
@@ -64,117 +62,113 @@
             if (el) el.textContent = msg;
         };
 
-        // --- SMART MAPPER ---
-        window.knownNames = new Set();
-
-        // Ranges of interest:
-        // 0-100: Basic Proto
-        // 1000-1100: ???
-        // 2000-2200: Open API v2
-        window.ranges = [
-            [0, 100],
-            [1000, 1050],
-            [2000, 2200]
-        ];
-        window.currentRangeIdx = 0;
-        window.currentId = 0;
-        window.isScanning = false;
-
-        window.startSmartScan = () => {
-            if (window.isScanning) return;
-            window.isScanning = true;
-
-            window.currentRangeIdx = 0;
-            window.currentId = window.ranges[0][0];
-            window.scanNext();
-        };
-
-        window.scanNext = () => {
-            if (!window.isScanning) return;
-
-            // Check bounds
-            const range = window.ranges[window.currentRangeIdx];
-            if (window.currentId > range[1]) {
-                // Next range
-                window.currentRangeIdx++;
-                if (window.currentRangeIdx >= window.ranges.length) {
-                    window.updateStatus("SCAN COMPLETE");
-                    window.isScanning = false;
-                    return;
-                }
-                window.currentId = window.ranges[window.currentRangeIdx][0];
-            }
-
-            const id = window.currentId;
-            window.updateStatus(`SCANNING: ${id}`);
-
-            // Send
+        // --- TUNNEL BORER ---
+        window.boreTunnel = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
+            if (!bridge) return;
+
+            // Get ID
+            const urlParams = new URLSearchParams(window.location.search);
+            const match = window.location.href.match(/id=(\d+)/);
+            const accId = match ? parseInt(match[1]) : 2614946;
+
+            window.updateStatus(`BORING TUNNEL (AccID: ${accId})...`);
+
+            // 1. Maintain Heartbeat
             try {
                 bridge.handlePluginEvent(JSON.stringify({
-                    payloadType: id,
-                    clientMsgId: "map-" + id,
-                    payload: {}
+                    payloadType: 2001,
+                    clientMsgId: initMsgId,
+                    payload: null
                 }));
             } catch (e) { }
 
-            window.currentId++;
+            // THE INNER PAYLOAD (Account Auth 2102)
+            const innerAuth = {
+                payloadType: 2102,
+                ctidTraderAccountId: accId,
+                token: "dummy"
+            };
 
-            // SLOW DOWN: 50ms = 20 req/s. Should be safe.
-            // If crash recurs, user can report, we increase to 200ms.
-            setTimeout(window.scanNext, 50);
+            // VARIANT 1: Nested 'payload'
+            setTimeout(() => {
+                const packet = {
+                    payloadType: 2100, // Tunnel Req
+                    clientMsgId: "tun-pay-" + Date.now(),
+                    payload: innerAuth
+                };
+                window.sendPacket(packet, "Nested Payload");
+            }, 500);
+
+            // VARIANT 2: Encapsulated String
+            setTimeout(() => {
+                const packet = {
+                    payloadType: 2100,
+                    clientMsgId: "tun-str-" + Date.now(),
+                    payload: JSON.stringify(innerAuth)
+                };
+                window.sendPacket(packet, "Nested String");
+            }, 1500);
+
+            // VARIANT 3: 'protoMessage' field (Common in Proto mapping)
+            setTimeout(() => {
+                const packet = {
+                    payloadType: 2100,
+                    clientMsgId: "tun-proto-" + Date.now(),
+                    payload: {
+                        protoMessage: innerAuth
+                    }
+                };
+                window.sendPacket(packet, "protoMessage");
+            }, 2500);
+
+            // VARIANT 4: Test 2103 (Open Url) - Visual Confirmation
+            setTimeout(() => {
+                const packet = {
+                    payloadType: 2103, // OpenInternalUrlReq?
+                    clientMsgId: "nav-" + Date.now(),
+                    payload: {
+                        url: "https://www.google.com"
+                    }
+                };
+                window.sendPacket(packet, "2103 OpenUrl");
+            }, 3500);
+        };
+
+        window.sendPacket = (obj, label) => {
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            try {
+                const json = JSON.stringify(obj);
+                bridge.handlePluginEvent(json);
+                window.pushLog(`>> SENT [${label}]`, "try");
+            } catch (e) { window.pushLog("Err: " + e.message); }
         };
 
         // --- HANDLER ---
+        window.processedHeartbeats = new Set();
         window.onHostMessage = (msg) => {
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
-                // Only start once
-                if (!window.isScanning) {
-                    window.pushLog(`<< RECV 2000. Starting Gentle Scan...`);
-                    window.startSmartScan();
-                }
+                if (window.processedHeartbeats.has(msg.clientMsgId)) return;
+                window.processedHeartbeats.add(msg.clientMsgId);
+
+                window.pushLog(`<< RECV 2000`);
+                window.boreTunnel(msg.clientMsgId);
             }
-            else if (msg.payloadType === 2500) {
-                // ERROR: "Unsupported...: NAME"
-                const idStr = msg.clientMsgId.replace("map-", "");
-                const txt = msg.payload || "";
-
-                // Extract Name
-                let name = "Unknown";
-                if (txt.includes(": ")) {
-                    name = txt.split(": ")[1];
-                } else {
-                    name = txt;
-                }
-
-                // UNLOCK: Only log UNIQUE names to save memory/UI
-                if (!window.knownNames.has(name)) {
-                    window.knownNames.add(name);
-
-                    // Highlight gold
-                    if (name.toLowerCase().includes("auth") ||
-                        name.toLowerCase().includes("sub") ||
-                        name.toLowerCase().includes("req")) {
-                        window.pushLog(`!!! FOUND ID ${idStr}: ${name}`, "hit");
-                    } else {
-                        window.pushLog(`New Type [${idStr}]: ${name}`, "unique");
-                    }
-                }
-
-                // Always update status with last found
-                // window.updateStatus(`SCANNING ${window.currentId} (Found: ${name})`);
+            else if (msg.payloadType === 2101) { // SendServerDataRes
+                window.updateStatus("!!! SUCCESS !!! TUNNEL OPEN !!!");
+                window.pushLog(`!!! RESPONSE 2101 !!!: ${JSON.stringify(msg)}`, "hit");
             }
-            else {
-                // SUCCESS?
-                window.pushLog(`!!! VALID RESPONSE [${msg.payloadType}] !!!`, "hit");
+            else if (msg.payloadType > 2000) {
+                window.updateStatus("!!! SUCCESS !!!");
+                window.pushLog(`!!! HIT [${msg.payloadType}] !!!: ${JSON.stringify(msg)}`, "hit");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v33: Gentle Mapper");
+            window.pushLog("Inspector v34: Tunnel Borer");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -185,7 +179,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v33: Gentle & Unique Log
+        Inspector v34: Wrapper Theory (2100 -> 2102)
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
