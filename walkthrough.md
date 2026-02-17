@@ -1,57 +1,73 @@
-# AutoLotCalculator Walkthrough
+# cTrader WebView Development: Auto Lot Calculator
 
-## 1. 概要
-このプロジェクトは、cTrader用の自動ロット計算ツールです。
-リスク％（資金の何％を失う覚悟か）とSL（損切り幅）を指定するだけで、最適なロット数を自動計算し、ワンクリックで注文できます。
+## Overview
+This project successfully reverse-engineered the internal cTrader WebView protocol to build a fully functional **Auto Lot Calculator (App v4.1)**. The app calculates optimal trade volume based on risk percentage and stop loss, fetches real-time prices, and places orders directly from the WebView.
 
-## 2. バージョン情報
+## 1. Protocol Reverse Engineering
+We discovered that the platform uses a "Tunneling" (Wrapper) architecture for API communication.
 
-### A. デスクトップ版 (cBot)
-- **ファイル:** `AutoLotCalculator.cs` (または `_utf8.mq5`)
-- **特徴:** チャート上にSL/TPラインが表示され、ドラッグ＆ドロップで調整可能。
-- **対象:** PC (Windows/Web)
+### 1.1 The Tunnel Structure
+Standard request IDs (e.g., `2102` Auth) failed when sent directly.
+We found that all API commands must be wrapped inside a specific **2100 (SendServerDataReq)** envelope.
 
-### B. モバイル対応版 (WebView Plugin)
-- **ファイル:** `alc_sdk.html`
-- **特徴:** スマホアプリ (cTrader Mobile) 内で動作するWebアプリ。公式SDKを使用。
-- **機能:**
-    - 残高・現在価格の自動取得
-    - シンボル検索 (例: "USDJPY")
-    - ロット自動計算
-    - 注文実行 (Buy/Sell)
+- **Request ID:** `2100` (Wrapper)
+- **Payload:**
+  - `payloadType`: The actual command ID (e.g., `2102`, `601`, `143`)
+  - `clientMsgId`: Unique ID for tracking response
+  - `payload`: The actual command data (JSON object or string)
 
-## 3. モバイル版 (SDK Plugin) の導入手順
+### 1.2 Key Command IDs Discovered
+| ID | Name | Purpose | Notes |
+|---|---|---|---|
+| **2000** | Heartbeat | Initial Handshake | Reply with 2001 (ACK) |
+| **2100** | Wrapper (Req) | Send Command | Wraps all other commands |
+| **2101** | Wrapper (Res) | Receive Response | Contains `data` (string) or `payload` (obj) |
+| **2102** | Wrapper (Event) | Receive Event | Push notifications (Quotes, Order updates) |
+| **175** | GetAccount | Fetch Account Info | Returns Balance, Currency, ID |
+| **841** | GetSymbolList | Fetch All Symbols | Returns lightweight list (Id, Name) |
+| **163** | GetSymbol | Fetch Symbol Details | Returns StepVolume, MinVolume, Digits |
+| **601** | SubscribeSpot | Stream Prices | `subscribeToSpotTimestamp: true` required |
+| **143** | CreateOrder | Place Trade | Quantity must be normalized (Units) |
 
-**cTrader Mobileでは、C#製のBotではなく、このWeb Pluginを使用します。**
+## 2. App Implementation Stages
 
-### ステップ 1: ファイルの準備
-1. アーティファクトフォルダ内の `alc_sdk.html` を見つけます。
-2. ファイル名を `index.html` に変更することを推奨します。
+### App v1.0 (Proof of Concept)
+- Successfully established the Tunnel (`2100` -> `2001`).
+- Fetched Account Balance and Symbol List.
+- **Result:** Connection Verified.
 
-### ステップ 2: アップロード (ホスティング)
-このHTMLファイルをインターネット上で公開し、URLを取得します。
+### App v2.0 (Core Logic)
+- Implemented Risk Calculation UI.
+- Added Trading Button (`143`).
+- **Issue:** Order rejected due to precision error ("Volume ...333.33 must be multiple of 1000").
+- **Lesson:** Volume must be normalized to Steps.
 
-**方法 A: Netlify Drop (推奨)**
-1. [Netlify Drop](https://app.netlify.com/drop) にアクセス。
-2. `index.html` が入っている **フォルダごと** ドラッグ＆ドロップ。
-3. 発行されたURL (例: `https://...netlify.app`) をコピー。
+### App v3.0 (Precision Fix)
+- Added `Math.floor(vol / step) * step` logic.
+- Improved JSON parsing (handled PascalCase keys).
+- **Issue:** Order rejected due to "Not Enough Money".
+- **Root Cause:** Sent `7,600,000` assuming cents, but API expected **Units**. The server interpreted this as 76 Lots!
+- **Lesson:** `1 Lot = 100,000 Units`. Send raw units (e.g., `76000`).
 
-**方法 B: GitHub Pages**
-1. GitHubリポジトリを作成し、`index.html` をアップロード。
-2. Settings > Pages で公開し、URLを取得。
+### App v4.0 (Unit Fix)
+- Corrected Volume Calculation to output Units.
+- Polished UI to Dark Mode.
+- **Issue:** Real-time Price ("---") stopped updating.
+- **Root Cause:** Disabled `subscribeToSpotTimestamp` in cleanup.
 
-### ステップ 3: cTraderでの設定
-1. PC版 cTrader (Web/Desktop) を開く。
-2. **"Automate"** (または "Plugins") タブへ移動。
-3. **"New WebView Plugin"** を作成。
-4. 設定画面の **"URL"** 欄に、ステップ2で取得したURLを貼り付け。
-5. **"Save" (保存)** する。
+### App v4.1 (Final Stable Version)
+- Re-enabled `subscribeToSpotTimestamp`.
+- Added loose ID matching for robust event handling.
+- **Result:** Fully functional Calculator & Trader.
 
-### ステップ 4: スマホでの使用
-1. スマホの cTrader アプリを開く。
-2. チャート画面またはメニューから、作成したプラグインを選択して起動。
-3. "Connected!" と表示されれば成功です。
+## 3. Usage Guide
+1. **Select Symbol**: Choose a pair (e.g., USDJPY).
+2. **Input Risk**: Set Risk Percentage (e.g., 1.0%) and Stop Loss (e.g., 20 Pips).
+3. **Verify**: Check the calculated Volume (Lots).
+4. **Trade**: Click "PLACE ORDER" to send a Market Buy command.
+5. **Confirm**: A success modal will confirm the trade execution.
 
-## 4. 注意事項
-- **デモ口座でテスト** してください。
-- リアル口座で使用する際は、リスク設定 (%) を慎重に確認してください。
+## 4. Future Enhancements
+- **Short Selling**: Add logic for SELL orders.
+- **Pending Orders**: Support Limit/Stop orders.
+- **Dynamic Pip Value**: Fetch precise conversion rates for non-USD pairs.
