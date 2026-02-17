@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Oracle Scanner</title>
+    <title>ALC Chatterbox</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #fa0;
+            background: #110;
+            color: #ff0;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #fa0;
+            border: 2px solid #ff0;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,23 +24,19 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #420;
+            border-bottom: 1px solid #440;
             padding: 4px;
             word-break: break-all;
-            color: #fb0;
+            color: #fd0;
         }
 
-        .err {
-            color: #f55;
+        .try {
+            color: #fff;
         }
 
         .succ {
             color: #5f5;
-            background: #020;
-        }
-
-        .info {
-            color: #8cf;
+            background: #242;
         }
     </style>
 
@@ -65,108 +61,125 @@
             if (el) el.textContent = msg;
         };
 
-        // --- CONTEXT SCAN ---
-        window.scanContext = () => {
-            window.pushLog("--- CONTEXT SCAN ---", "info");
-            window.pushLog("URL: " + window.location.href);
-            window.pushLog("Cookie: " + (document.cookie || "none"));
-            window.pushLog("Referrer: " + (document.referrer || "none"));
+        // --- HOOK VERIFY ---
+        window.ensureOracle = () => {
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            if (!bridge) return false;
 
-            // Search URL params for potential tokens
-            const urlParams = new URLSearchParams(window.location.search);
-            const entries = urlParams.entries();
-            for (const [key, val] of entries) {
-                window.pushLog(`Param [${key}] = ${val}`);
+            const desc = Object.getOwnPropertyDescriptor(bridge, 'handleErrorEvent') ||
+                Object.getOwnPropertyDescriptor(Object.getPrototypeOf(bridge), 'handleErrorEvent');
+
+            if (desc) {
+                window.pushLog(`Desc: w=${desc.writable}, c=${desc.configurable}`);
+            } else {
+                window.pushLog("Desc: Not found (on instance or proto)");
+            }
+
+            // Try Hook
+            try {
+                bridge.handleErrorEvent = (err) => {
+                    window.pushLog("!!! ORACLE ERROR !!! " + JSON.stringify(err), "succ");
+                };
+                // Check if stuck
+                if (bridge.handleErrorEvent.toString().includes("ORACLE")) {
+                    window.pushLog("Hook Attached Successfully.", "try");
+                    return true;
+                } else {
+                    window.pushLog("Hook Failed (Native Persistent).");
+                    return false;
+                }
+            } catch (e) {
+                window.pushLog("Hook Err: " + e.message);
+                return false;
             }
         };
 
-        // --- ORACLE TEST ---
-        window.hookError = () => {
+        // --- CHATTERBOX ---
+        window.chatter = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (bridge && bridge.handleErrorEvent) {
-                // Overwrite native? Only if writable. 
-                // If not, we can't hook. But v23 said "Hooked Success".
-                try {
-                    bridge.handleErrorEvent = function (err) {
-                        window.pushLog("!!! ERROR CALLBACK FIRED !!!", "err");
-                        window.pushLog("Data: " + JSON.stringify(err));
-                        window.updateStatus("ORACLE SPOKE (Error Fired)");
+            if (!bridge) return;
+
+            // Extract Account ID
+            const urlParams = new URLSearchParams(window.location.search);
+            const accId = urlParams.get("id"); // "2614946"
+
+            window.updateStatus("CHATTERING (Context)...");
+
+            const variants = [
+                // 1. Standard 2001 with Context
+                {
+                    name: "2001+AccID",
+                    payload: {
+                        payloadType: 2001,
+                        clientMsgId: initMsgId,
+                        payload: { accountId: accId }
                     }
-                    window.pushLog("Hooked handleErrorEvent", "info");
-                } catch (e) {
-                    window.pushLog("Hook Failed: " + e.message);
-                }
-            }
+                },
+                // 2. Ready State
+                {
+                    name: "Ready",
+                    payload: {
+                        payloadType: 1000, // Guess
+                        clientMsgId: initMsgId,
+                        payload: "ready"
+                    }
+                },
+                {
+                    name: "Type:Ready",
+                    payload: {
+                        type: "ready", // Simple type
+                        accountId: accId
+                    }
+                },
+                // 3. Auth with AccID (2100)
+                {
+                    name: "2100+AccID",
+                    payload: {
+                        payloadType: 2100,
+                        clientMsgId: "auth-" + Date.now(),
+                        payload: {
+                            accountId: accId,
+                            token: accId // Try using ID as token
+                        }
+                    }
+                },
+                // 4. Raw Strings
+                { name: "Raw:Ready", custom: "ready" },
+                { name: "Raw:Init", custom: "initialised" }
+            ];
+
+            let delay = 200;
+            variants.forEach(v => {
+                setTimeout(() => {
+                    let msg = v.custom ? v.custom : JSON.stringify(v.payload);
+                    try {
+                        bridge.handlePluginEvent(msg);
+                        window.pushLog(`>> SENT [${v.name}]`, "try");
+                    } catch (e) { }
+                }, delay);
+                delay += 800;
+            });
         };
-
-        window.testOracle = () => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) return;
-
-            window.updateStatus("TESTING ORACLE (Garbage)...");
-
-            // 1. Send Absolute Garbage (Should create error if bridge is working)
-            try {
-                bridge.handlePluginEvent("THIS_IS_GARBAGE_JSON");
-                window.pushLog(">> SENT 'GARBAGE_JSON'");
-            } catch (e) { }
-
-            // 2. Send Invalid Object
-            try {
-                bridge.handlePluginEvent(JSON.stringify({ badKey: "badValue" }));
-                window.pushLog(">> SENT {badKey}");
-            } catch (e) { }
-        };
-
-        window.tryDirectAuth = (initMsgId) => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) return;
-
-            window.updateStatus("TRYING DIRECT AUTH (Skip 2001)...");
-
-            // SKIP 2001. Send 2100 immediately.
-            // Try to find a token from URL scan
-            let token = "dummy_token";
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.has("token")) token = urlParams.get("token");
-            if (urlParams.has("access_token")) token = urlParams.get("access_token");
-
-            const msg = {
-                payloadType: 2100,
-                clientMsgId: initMsgId, // Reuse the ID? Or New? Try Reuse first.
-                payload: {
-                    accessToken: token, // Guessing key
-                    token: token,
-                    oAuthToken: token
-                }
-            };
-
-            try {
-                bridge.handlePluginEvent(JSON.stringify(msg));
-                window.pushLog(">> SENT 2100 (Direct)", "info");
-            } catch (e) { }
-        };
-
 
         // --- HANDLER ---
+        window.processedIds = new Set();
         window.onHostMessage = (msg) => {
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
+                if (window.processedIds.has(msg.clientMsgId)) return;
+                window.processedIds.add(msg.clientMsgId);
+
                 window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
 
-                // 1. Scan Context (Only once)
-                if (!window.scanned) {
-                    window.scanned = true;
-                    window.scanContext();
-                    window.hookError();
-
-                    // 2. Test Oracle (Garbage)
-                    setTimeout(() => window.testOracle(), 500);
-
-                    // 3. Direct Auth (Skip 2001)
-                    setTimeout(() => window.tryDirectAuth(msg.clientMsgId), 1500);
+                // 1. Verify Oracle
+                if (!window.oracleChecked) {
+                    window.oracleChecked = true;
+                    window.ensureOracle();
                 }
+
+                // 2. Chatter
+                window.chatter(msg.clientMsgId);
             }
             else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType === 2500) {
                 window.updateStatus("!!! SUCCESS !!!");
@@ -176,7 +189,7 @@
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v28: Oracle & Context");
+            window.pushLog("Inspector v29: Chatterbox");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -187,7 +200,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v28: Environment Scan
+        Inspector v29: AccountID & Keywords
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
