@@ -1,415 +1,345 @@
-<!DOCTYPE html>
-<html lang="ja">
+<!doctype html>
+<html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Auto Lot Calculator (Web Plugin)</title>
+    <meta charset="utf-8" />
+    <title>ALC v1.0</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
-        :root {
-            --bg-color: #121212;
-            --card-bg: #1e1e1e;
-            --text-main: #ffffff;
-            --text-sub: #b0b0b0;
-            --accent-buy: #2196F3;
-            --accent-sell: #F44336;
-        }
-
         body {
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #1a1a1a;
+            color: #eee;
+            font-family: sans-serif;
+            padding: 15px;
             margin: 0;
-            padding: 12px;
-            font-size: 14px;
-            touch-action: manipulation;
-            /* Mobile scroll optimization */
         }
 
-        .container {
-            display: grid;
-            gap: 12px;
-            max-width: 400px;
-            margin: 0 auto;
+        h1 {
+            font-size: 18px;
+            margin: 0 0 10px 0;
+            color: #4db8ff;
         }
 
         .card {
-            background: var(--card-bg);
+            background: #2d2d2d;
+            padding: 15px;
             border-radius: 8px;
-            padding: 12px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            margin-bottom: 10px;
+        }
+
+        .label {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 4px;
+        }
+
+        .value {
+            font-size: 16px;
+            font-weight: bold;
         }
 
         .row {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            margin-bottom: 8px;
         }
 
-        .col {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .label {
-            font-size: 11px;
-            color: var(--text-sub);
-            margin-bottom: 2px;
-        }
-
-        .value {
-            font-size: 16px;
-            font-weight: 600;
-        }
-
-        .highlight {
-            color: #4CAF50;
-            font-size: 24px;
-            font-weight: bold;
-        }
-
-        input[type=range] {
+        select,
+        button {
             width: 100%;
-            margin: 10px 0;
-            height: 6px;
-            border-radius: 3px;
-            background: #444;
-            outline: none;
-        }
-
-        input[type=number] {
-            background: transparent;
-            border: none;
+            padding: 10px;
+            background: #3d3d3d;
+            border: 1px solid #555;
             color: #fff;
-            font-size: 16px;
-            width: 80px;
-            text-align: right;
-        }
-
-        .btn-group {
-            display: flex;
-            gap: 8px;
-            margin-top: 8px;
-        }
-
-        .btn {
-            flex: 1;
-            padding: 14px;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
-            font-weight: bold;
-            color: white;
+            border-radius: 4px;
+            margin-top: 5px;
             cursor: pointer;
-            transition: opacity 0.2s;
         }
 
-        .btn:active {
-            opacity: 0.7;
-            transform: scale(0.98);
-        }
-
-        .btn-buy {
-            background: var(--accent-buy);
-        }
-
-        .btn-sell {
-            background: var(--accent-sell);
-        }
-
-        /* Fine Tuning Buttons */
-        .fine-tune {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: #333;
-            padding: 4px;
-            border-radius: 4px;
-        }
-
-        .ft-btn {
-            width: 30px;
-            height: 30px;
-            background: #444;
+        button {
+            background: #007acc;
             border: none;
-            color: #fff;
             font-weight: bold;
-            border-radius: 4px;
         }
 
-        /* Debug Console */
-        #debug-console {
-            margin-top: 20px;
-            padding: 8px;
-            background: #000;
-            color: #0f0;
+        button:active {
+            background: #005c99;
+        }
+
+        button:disabled {
+            background: #444;
+            color: #888;
+        }
+
+        #log {
             font-family: monospace;
             font-size: 10px;
-            height: 100px;
-            overflow-y: scroll;
-            border: 1px solid #333;
-            display: none;
-            /* Hidden by default */
+            color: #666;
+            margin-top: 20px;
+            white-space: pre-wrap;
         }
 
-        .toggle-debug {
-            font-size: 10px;
-            color: #555;
+        .status {
+            font-size: 12px;
+            padding: 5px;
             text-align: center;
-            margin-top: 10px;
-            cursor: pointer;
+            color: #aaa;
         }
 
-        .toast {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(33, 33, 33, 0.95);
-            color: #fff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 13px;
-            opacity: 0;
-            transition: opacity 0.3s;
-            pointer-events: none;
-            z-index: 1000;
+        .ok {
+            color: #4f4;
+        }
+
+        .err {
+            color: #f44;
         }
     </style>
+
+    <script>
+        // --- APP STATE ---
+        const App = {
+            accountId: null,
+            balance: 0,
+            currency: "---",
+            symbols: [],
+            selectedSymbol: null,
+            rate: 0 // Base->Deposit Rate (e.g. EURUSD price if account is USD)
+        };
+
+        // --- TUNNEL LAYER ---
+        const Tunnel = {
+            queue: new Map(), // id -> callback
+
+            send: (commandId, payload, callback) => {
+                const bridge = window.EventBasedPluginJavaScriptBridge;
+                if (!bridge) return;
+
+                const innerMsgId = "req-" + commandId + "-" + Date.now();
+
+                const innerMsg = {
+                    payloadType: commandId,
+                    clientMsgId: innerMsgId,
+                    payload: payload || {}
+                };
+
+                // Register callback
+                if (callback) Tunnel.queue.set(innerMsgId, callback);
+
+                // Wrap in 2100 (Tunnel)
+                const wrapper = {
+                    payloadType: 2100,
+                    clientMsgId: "wrap-" + innerMsgId,
+                    payload: innerMsg // Object nesting confirmed!
+                };
+
+                try {
+                    bridge.handlePluginEvent(JSON.stringify(wrapper));
+                    // console.log(">> SENT", commandId);
+                } catch (e) {
+                    console.error("Send Error", e);
+                }
+            },
+
+            onMessage: (wrapperMsg) => {
+                // Unwrap 2101
+                if (wrapperMsg.payloadType === 2101) {
+                    // Payload.data is Stringified JSON
+                    if (wrapperMsg.payload && wrapperMsg.payload.data) {
+                        try {
+                            const innerStr = wrapperMsg.payload.data;
+                            const innerMsg = JSON.parse(innerStr);
+
+                            // Handle Callback
+                            if (Tunnel.queue.has(innerMsg.clientMsgId)) {
+                                const cb = Tunnel.queue.get(innerMsg.clientMsgId);
+                                Tunnel.queue.delete(innerMsg.clientMsgId);
+                                cb(innerMsg.payload);
+                            }
+
+                            // Handle Events
+                            if (innerMsg.payloadType === 2126) { // Execution/Quote Event? 
+                                // TODO
+                            }
+
+                        } catch (e) { console.error("Parse Error", e); }
+                    }
+                }
+                // Unwrap 2102 (Server Data / Error)
+                else if (wrapperMsg.payloadType === 2102) {
+                    // handle events
+                }
+                // Error
+                else if (wrapperMsg.payloadType === 2500) {
+                    UI.log("Err: " + wrapperMsg.payload);
+                }
+            }
+        };
+
+        // --- UI LAYER ---
+        const UI = {
+            init: () => {
+                // Listener
+                window.addEventListener('message-from-host', (e) => {
+                    const msg = e.data;
+                    if (msg.payloadType === 2000) {
+                        // Auto-respond heartbeat
+                        // Tunnel.send(2001, null); // Actually 2001 is direct, not tunneled?
+                        // Let's send direct 2001
+                        try {
+                            window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({
+                                payloadType: 2001,
+                                clientMsgId: msg.clientMsgId,
+                                payload: null
+                            }));
+                        } catch (e) { }
+
+                        if (!App.ready) {
+                            App.ready = true;
+                            UI.start();
+                        }
+                    } else {
+                        Tunnel.onMessage(msg);
+                    }
+                });
+            },
+
+            log: (txt) => {
+                const el = document.getElementById('log');
+                if (el) el.textContent = txt + "\n" + el.textContent.substring(0, 500);
+            },
+
+            setStatus: (txt, cls) => {
+                const el = document.getElementById('status');
+                if (el) {
+                    el.textContent = txt;
+                    el.className = "status " + (cls || "");
+                }
+            },
+
+            start: () => {
+                UI.setStatus("Connected. Fetching Account...", "ok");
+
+                // 1. Get Account Info (175)
+                Tunnel.send(175, {}, (res) => { // ProtoGetAccountInformationRes (124)
+                    if (res.Trader) {
+                        App.accountId = res.Trader.TraderId; // Or Login
+                        App.balance = res.Trader.Balance / 100; // Cents? Usually.
+                        App.currency = res.DepositCurrency || "USD"; // Might be in Group?
+
+                        UI.updateAccount();
+                        UI.fetchSymbols();
+                    }
+                });
+            },
+
+            updateAccount: () => {
+                document.getElementById('acc_id').textContent = App.accountId || "---";
+                document.getElementById('acc_bal').textContent = (App.balance).toFixed(2);
+                document.getElementById('acc_curr').textContent = App.currency; // This might need separate call (Group Info 176)
+
+                if (App.currency === "---") {
+                    // Try Fetch Group (176)
+                    Tunnel.send(176, {}, (res) => {
+                        if (res.depositCurrency) {
+                            App.currency = res.depositCurrency;
+                            UI.updateAccount();
+                        }
+                    });
+                }
+            },
+
+            fetchSymbols: () => {
+                UI.setStatus("Fetching Symbols...");
+                // 841: GetLightSymbolList
+                Tunnel.send(841, { includeArchivedSymbols: false }, (res) => { // 842
+                    if (res.Symbol) {
+                        App.symbols = res.Symbol; // { Id, Name }
+                        UI.renderSymbols();
+                        UI.setStatus("Ready", "ok");
+                    }
+                });
+            },
+
+            renderSymbols: () => {
+                const sel = document.getElementById('sym_select');
+                sel.innerHTML = "";
+
+                // Sort by name
+                App.symbols.sort((a, b) => a.Name.localeCompare(b.Name));
+
+                // Populate
+                const def = document.createElement('option');
+                def.text = "Select Symbol";
+                sel.add(def);
+
+                App.symbols.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.Id;
+                    opt.text = s.Name;
+                    sel.add(opt);
+                });
+
+                sel.onchange = () => {
+                    const id = parseInt(sel.value);
+                    const s = App.symbols.find(x => x.Id === id);
+                    if (s) {
+                        App.selectedSymbol = s;
+                        UI.fetchSymbolDetails(id);
+                    }
+                };
+            },
+
+            fetchSymbolDetails: (id) => {
+                UI.setStatus(`Loading ${App.selectedSymbol.Name}...`);
+                // 163: GetSymbolReq (Detail)
+                Tunnel.send(163, { symbolId: [id] }, (res) => { // 164
+                    if (res.symbol && res.symbol.length > 0) {
+                        const det = res.symbol[0];
+                        // TickValue, LotSize etc?
+                        // We need to verify what fields we get.
+
+                        const el = document.getElementById('sym_detail');
+                        el.innerHTML = `
+                          <div class="row"><span class="label">ID</span><span class="value">${det.Id}</span></div>
+                          <div class="row"><span class="label">StepVol</span><span class="value">${det.StepVolume || "?"}</span></div>
+                          <div class="row"><span class="label">MinVol</span><span class="value">${det.MinVolume || "?"}</span></div>
+                      `;
+                        UI.setStatus("Done", "ok");
+                    }
+                });
+            }
+        };
+
+        window.onload = UI.init;
+    </script>
 </head>
 
 <body>
-    <div class="container">
-        <!-- Main Display -->
-        <div class="card">
-            <div class="row">
-                <div class="col">
-                    <span class="label">CALCULATED LOTS</span>
-                    <span id="lot-display" class="value highlight">0.00</span>
-                </div>
-                <div class="col" style="text-align: right;">
-                    <span class="label">RISK AMOUNT</span>
-                    <span id="risk-display" class="value">$0</span>
-                </div>
-            </div>
-            <div class="row" style="margin-top: 8px; border-top: 1px solid #333; padding-top: 8px;">
-                <div class="col">
-                    <span class="label">PRICE</span>
-                    <span id="price-display" class="value">---.---</span>
-                </div>
-                <div class="col" style="text-align: right;">
-                    <span class="label">BALANCE</span>
-                    <span id="balance-display" class="value">$---</span>
-                </div>
-            </div>
+    <h1>ALC v1.0</h1>
+    <div id="status" class="status">Waiting for Bridge...</div>
+
+    <!-- ACCOUNT CARD -->
+    <div class="card">
+        <div class="row">
+            <span class="label">Account</span>
+            <span class="value" id="acc_id">---</span>
         </div>
-
-        <!-- Controls -->
-        <div class="card">
-            <!-- Risk Slider -->
-            <div class="row">
-                <span class="label">RISK PERCENT: <span id="risk-val">1.0</span>%</span>
-            </div>
-            <input type="range" id="risk-slider" min="0.1" max="5.0" step="0.1" value="1.0">
-
-            <!-- SL Distance Slider -->
-            <div class="row">
-                <span class="label">SL DISTANCE: <span id="sl-val">20.0</span> pips</span>
-            </div>
-            <input type="range" id="sl-slider" min="5" max="100" step="0.5" value="20.0">
-
-            <!-- Fine Tune SL -->
-            <div class="row" style="justify-content: center; margin-top: 8px;">
-                <div class="fine-tune">
-                    <button class="ft-btn" onclick="adjustSL(-1)">-</button>
-                    <span style="font-size: 11px; color: #aaa;">FINE TUNE</span>
-                    <button class="ft-btn" onclick="adjustSL(1)">+</button>
-                </div>
-            </div>
+        <div class="row">
+            <span class="label">Balance</span>
+            <span class="value"><span id="acc_bal">0.00</span> <span id="acc_curr"></span></span>
         </div>
-
-        <!-- Manual Input (Fallback) -->
-        <div class="card">
-            <div class="row">
-                <span class="label">MANUAL BALANCE (USD)</span>
-                <input type="number" id="balance-input" value="10000" placeholder="10000">
-            </div>
-            <div style="font-size: 10px; color: #666; margin-top: 4px;">
-                Note: Auto-updates if API connects.
-            </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="btn-group">
-            <button class="btn btn-sell" onclick="executeTrade('SELL')">SELL</button>
-            <button class="btn btn-buy" onclick="executeTrade('BUY')">BUY</button>
-        </div>
-
-        <div class="toggle-debug" onclick="toggleDebug()">Show Debug Log</div>
-        <div id="debug-console">Running...</div>
     </div>
 
-    <div id="toast" class="toast">Message</div>
+    <!-- SYMBOL CARD -->
+    <div class="card">
+        <span class="label">Symbol</span>
+        <select id="sym_select">
+            <option>Loading...</option>
+        </select>
+        <div id="sym_detail" style="margin-top:10px;"></div>
+    </div>
 
-    <script>
-        // --- State ---
-        let state = {
-            riskPercent: 1.0,
-            slPips: 20.0,
-            balance: 10000, // Default fallback
-            price: 0,
-            symbolTickValue: 10, // Default for standard pair (USD)
-            symbolLotSize: 100000 // Standard Lot
-        };
-
-        // --- Core Logic ---
-        function calculate() {
-            // Update from UI inputs if needed
-            state.balance = parseFloat(document.getElementById('balance-input').value) || state.balance;
-
-            // Risk Amount
-            const riskAmount = state.balance * (state.riskPercent / 100.0);
-
-            // Lot Calculation
-            // Lots = Risk / (SL_pips * Pip_Value_per_Lot)
-            // Example: Risk $100, SL 20 pips. 1 pip = $10 (Standard Lot).
-            // Lots = 100 / (20 * 10) = 0.5 Lots
-            let lots = 0;
-            if (state.slPips > 0) {
-                // Assume standard TickValue logic for now (Need API for exact tick value)
-                // Default: 1 pip = 10 units of quote currency (USD for EURUSD)
-                lots = riskAmount / (state.slPips * state.symbolTickValue);
-            }
-
-            // Normalize (2 decimal places, min 0.01)
-            lots = Math.floor(lots * 100) / 100;
-            if (lots < 0.01) lots = 0;
-
-            // Update UI
-            document.getElementById('lot-display').innerText = lots.toFixed(2);
-            document.getElementById('risk-display').innerText = '$' + Math.floor(riskAmount);
-            document.getElementById('risk-val').innerText = state.riskPercent.toFixed(1);
-            document.getElementById('sl-val').innerText = state.slPips.toFixed(1);
-            document.getElementById('balance-display').innerText = '$' + Math.floor(state.balance);
-
-            if (state.price > 0) {
-                document.getElementById('price-display').innerText = state.price.toFixed(5);
-            }
-        }
-
-        function adjustSL(delta) {
-            let newVal = state.slPips + delta;
-            if (newVal < 5) newVal = 5;
-            if (newVal > 200) newVal = 200;
-            state.slPips = newVal;
-            document.getElementById('sl-slider').value = newVal;
-            calculate();
-        }
-
-        // --- Communication (WebView Plugin API) ---
-        window.addEventListener('message', (event) => {
-            const msg = event.data;
-            log('Received: ' + JSON.stringify(msg));
-
-            // Handle "symbolUpdate" (Available in your template)
-            if (msg.type === 'symbolUpdate') {
-                // Assuming msg.symbol contains name
-                log('Symbol Updated: ' + msg.symbol);
-                if (msg.bid) state.price = msg.bid; // If bid price is included
-                if (msg.tickValue) state.symbolTickValue = msg.tickValue; // If exposed
-            }
-
-            // Handle "accountUpdate" (Hypothetical)
-            if (msg.type === 'accountUpdate' || msg.balance) {
-                state.balance = msg.balance || state.balance;
-                document.getElementById('balance-input').value = state.balance;
-            }
-
-            calculate();
-        });
-
-        // Send Initial "Ready" Signal
-        try {
-            window.parent.postMessage({ type: 'ready' }, '*');
-            log('Sent: Ready');
-        } catch (e) { log('Error sending Ready: ' + e); }
-
-
-        // --- Actions ---
-        function executeTrade(direction) {
-            const lots = document.getElementById('lot-display').innerText;
-            if (parseFloat(lots) <= 0) {
-                showToast('Invalid Lot Size');
-                return;
-            }
-
-            const msg = `Executing ${direction} ${lots} Lots...`;
-            showToast(msg);
-            log(msg);
-
-            // SEND COMMAND TO CTRADER (Hypothetical Protocol based on open APIs)
-            // Trying multiple formats to catch the right one
-            const payload1 = {
-                type: 'executeOrder',
-                direction: direction,
-                volume: parseFloat(lots),
-                symbol: 'CurrentSymbol' // or msg.symbol
-                // sl: ... tp: ...
-            };
-
-            // Format from your template logic style
-            const payload2 = {
-                command: direction,
-                value: lots
-            };
-
-            try {
-                // Send standard message
-                window.parent.postMessage(payload1, '*');
-                log('Sent Payload 1: ' + JSON.stringify(payload1));
-
-                // Fallback attempt
-                // window.parent.postMessage(payload2, '*');
-
-            } catch (e) {
-                log('Send Error: ' + e);
-            }
-        }
-
-        // --- Helpers ---
-        document.getElementById('risk-slider').addEventListener('input', (e) => {
-            state.riskPercent = parseFloat(e.target.value);
-            calculate();
-        });
-        document.getElementById('sl-slider').addEventListener('input', (e) => {
-            state.slPips = parseFloat(e.target.value);
-            calculate();
-        });
-        document.getElementById('balance-input').addEventListener('input', calculate);
-
-        function showToast(msg) {
-            const t = document.getElementById('toast');
-            t.innerText = msg;
-            t.style.opacity = 1;
-            setTimeout(() => t.style.opacity = 0, 3000);
-        }
-
-        function log(txt) {
-            const c = document.getElementById('debug-console');
-            const time = new Date().toLocaleTimeString();
-            c.innerHTML += `[${time}] ${txt}<br>`;
-            c.scrollTop = c.scrollHeight;
-            console.log(txt);
-        }
-
-        function toggleDebug() {
-            const c = document.getElementById('debug-console');
-            c.style.display = c.style.display === 'none' ? 'block' : 'none';
-        }
-
-        // Initial Run
-        calculate();
-    </script>
+    <div id="log"></div>
 </body>
 
 </html>

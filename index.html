@@ -3,178 +3,343 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Tunnel Valid ID</title>
+    <title>ALC v1.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #002;
-            color: #fff;
-            font-family: monospace;
+            background: #1a1a1a;
+            color: #eee;
+            font-family: sans-serif;
+            padding: 15px;
+            margin: 0;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin: 0 0 10px 0;
+            color: #4db8ff;
+        }
+
+        .card {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .label {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 4px;
+        }
+
+        .value {
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        select,
+        button {
+            width: 100%;
             padding: 10px;
+            background: #3d3d3d;
+            border: 1px solid #555;
+            color: #fff;
+            border-radius: 4px;
+            margin-top: 5px;
+            cursor: pointer;
+        }
+
+        button {
+            background: #007acc;
+            border: none;
+            font-weight: bold;
+        }
+
+        button:active {
+            background: #005c99;
+        }
+
+        button:disabled {
+            background: #444;
+            color: #888;
+        }
+
+        #log {
+            font-family: monospace;
+            font-size: 10px;
+            color: #666;
+            margin-top: 20px;
+            white-space: pre-wrap;
         }
 
         .status {
-            padding: 10px;
-            border: 2px solid #fff;
-            margin-bottom: 10px;
-            font-weight: bold;
-            font-size: 16px;
+            font-size: 12px;
+            padding: 5px;
             text-align: center;
-        }
-
-        .log {
-            font-size: 11px;
-            border-bottom: 1px solid #444;
-            padding: 4px;
-            word-break: break-all;
-        }
-
-        .try {
             color: #aaa;
         }
 
-        .hit {
-            color: #fff;
-            background: #c00;
-            font-weight: bold;
-            border: 2px solid #fff;
-            padding: 5px;
+        .ok {
+            color: #4f4;
+        }
+
+        .err {
+            color: #f44;
         }
     </style>
 
     <script>
-        // --- UTILS ---
-        window.pushLog = (msg, type) => {
-            const el = document.getElementById('logs');
-            if (el) {
-                const div = document.createElement('div');
-                div.className = "log " + (type || "");
-                div.textContent = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
-                el.insertBefore(div, el.firstChild);
-            }
+        // --- APP STATE ---
+        const App = {
+            accountId: null,
+            balance: 0,
+            currency: "---",
+            symbols: [],
+            selectedSymbol: null,
+            rate: 0 // Base->Deposit Rate (e.g. EURUSD price if account is USD)
         };
 
-        window.updateStatus = (msg) => {
-            const el = document.getElementById('status');
-            if (el) el.textContent = msg;
-        };
+        // --- TUNNEL LAYER ---
+        const Tunnel = {
+            queue: new Map(), // id -> callback
 
-        // --- VALID ID FUZZER ---
-        window.fuzzValidIds = (initMsgId) => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) return;
+            send: (commandId, payload, callback) => {
+                const bridge = window.EventBasedPluginJavaScriptBridge;
+                if (!bridge) return;
 
-            window.updateStatus("FUZZING VALID IDs (841 / 175)...");
+                const innerMsgId = "req-" + commandId + "-" + Date.now();
 
-            // HEARTBEAT
-            try { bridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: initMsgId, payload: null })); } catch (e) { }
-
-            // TARGETS (From documentation)
-            // 841: ProtoGetLightSymbolListReq
-            // 175: ProtoGetAccountInformationReq
-
-            const targets = [
-                { id: 841, name: "GetSyms", payload: { includeArchivedSymbols: false } },
-                { id: 175, name: "GetAcc", payload: {} }
-            ];
-
-            targets.forEach(t => {
-                const innerObj = {
-                    payloadType: t.id,
-                    clientMsgId: "req-" + t.id + "-" + Date.now(),
-                    payload: t.payload
+                const innerMsg = {
+                    payloadType: commandId,
+                    clientMsgId: innerMsgId,
+                    payload: payload || {}
                 };
-                const innerStr = JSON.stringify(innerObj);
-                const innerB64 = btoa(innerStr);
 
-                // VARIATIONS for 2100 Wrapper
-                const variants = [
-                    // 1. NESTED OBJECT
-                    {
-                        name: `${t.name}:Obj`,
-                        json: { payloadType: 2100, clientMsgId: "fw1", payload: innerObj }
-                    },
-                    // 2. NESTED STRING
-                    {
-                        name: `${t.name}:Str`,
-                        json: { payloadType: 2100, clientMsgId: "fw2", payload: innerStr }
-                    },
-                    // 3. BASE64 STRING
-                    {
-                        name: `${t.name}:B64`,
-                        json: { payloadType: 2100, clientMsgId: "fw3", payload: innerB64 }
-                    },
-                    // 4. PROTO MESSAGE Field
-                    {
-                        name: `${t.name}:Proto`,
-                        json: { payloadType: 2100, clientMsgId: "fw4", payload: { protoMessage: innerObj } }
-                    },
-                    // 5. DATA Field
-                    {
-                        name: `${t.name}:Data`,
-                        json: { payloadType: 2100, clientMsgId: "fw5", payload: { data: innerObj } }
-                    }
-                ];
+                // Register callback
+                if (callback) Tunnel.queue.set(innerMsgId, callback);
 
-                let delay = 100;
-                variants.forEach(v => {
-                    setTimeout(() => {
+                // Wrap in 2100 (Tunnel)
+                const wrapper = {
+                    payloadType: 2100,
+                    clientMsgId: "wrap-" + innerMsgId,
+                    payload: innerMsg // Object nesting confirmed!
+                };
+
+                try {
+                    bridge.handlePluginEvent(JSON.stringify(wrapper));
+                    // console.log(">> SENT", commandId);
+                } catch (e) {
+                    console.error("Send Error", e);
+                }
+            },
+
+            onMessage: (wrapperMsg) => {
+                // Unwrap 2101
+                if (wrapperMsg.payloadType === 2101) {
+                    // Payload.data is Stringified JSON
+                    if (wrapperMsg.payload && wrapperMsg.payload.data) {
                         try {
-                            bridge.handlePluginEvent(JSON.stringify(v.json));
-                            window.pushLog(`>> SENT [${v.name}]`, "try");
-                        } catch (e) { }
-                    }, delay);
-                    delay += 600;
-                });
-            });
-        };
+                            const innerStr = wrapperMsg.payload.data;
+                            const innerMsg = JSON.parse(innerStr);
 
-        // --- HANDLER ---
-        window.processedHeartbeats = new Set();
-        window.onHostMessage = (msg) => {
-            if (!msg) return;
+                            // Handle Callback
+                            if (Tunnel.queue.has(innerMsg.clientMsgId)) {
+                                const cb = Tunnel.queue.get(innerMsg.clientMsgId);
+                                Tunnel.queue.delete(innerMsg.clientMsgId);
+                                cb(innerMsg.payload);
+                            }
 
-            if (msg.payloadType === 2000) {
-                if (window.processedHeartbeats.has(msg.clientMsgId)) return;
-                window.processedHeartbeats.add(msg.clientMsgId);
-                window.pushLog(`<< RECV 2000`);
-                window.fuzzValidIds(msg.clientMsgId);
-            }
-            else if (msg.payloadType === 2101) {
-                // 2101 = SendServerDataRes -> SUCCESS
-                window.updateStatus("!!! SUCCESS (2101) !!!");
-                window.pushLog(`!!! ACK [2101] !!! ${JSON.stringify(msg)}`, "hit");
-            }
-            else if (msg.payloadType > 2000 && msg.payloadType !== 2500) {
-                // OTHER TUNNEL EVENT
-                window.updateStatus("!!! SUCCESS !!!");
-                window.pushLog(`!!! HIT [${msg.payloadType}] !!! ${JSON.stringify(msg)}`, "hit");
-            }
-            else if (msg.payloadType === 2500) {
-                const txt = msg.payload || "";
-                if (!txt.includes("Unsupported")) {
-                    window.pushLog(`Err [2500]: ${txt}`, "try");
+                            // Handle Events
+                            if (innerMsg.payloadType === 2126) { // Execution/Quote Event? 
+                                // TODO
+                            }
+
+                        } catch (e) { console.error("Parse Error", e); }
+                    }
+                }
+                // Unwrap 2102 (Server Data / Error)
+                else if (wrapperMsg.payloadType === 2102) {
+                    // handle events
+                }
+                // Error
+                else if (wrapperMsg.payloadType === 2500) {
+                    UI.log("Err: " + wrapperMsg.payload);
                 }
             }
         };
 
-        // --- SETUP ---
-        window.onload = () => {
-            window.pushLog("Inspector v38: Valid Protocols");
-            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
+        // --- UI LAYER ---
+        const UI = {
+            init: () => {
+                // Listener
+                window.addEventListener('message-from-host', (e) => {
+                    const msg = e.data;
+                    if (msg.payloadType === 2000) {
+                        // Auto-respond heartbeat
+                        // Tunnel.send(2001, null); // Actually 2001 is direct, not tunneled?
+                        // Let's send direct 2001
+                        try {
+                            window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({
+                                payloadType: 2001,
+                                clientMsgId: msg.clientMsgId,
+                                payload: null
+                            }));
+                        } catch (e) { }
+
+                        if (!App.ready) {
+                            App.ready = true;
+                            UI.start();
+                        }
+                    } else {
+                        Tunnel.onMessage(msg);
+                    }
+                });
+            },
+
+            log: (txt) => {
+                const el = document.getElementById('log');
+                if (el) el.textContent = txt + "\n" + el.textContent.substring(0, 500);
+            },
+
+            setStatus: (txt, cls) => {
+                const el = document.getElementById('status');
+                if (el) {
+                    el.textContent = txt;
+                    el.className = "status " + (cls || "");
+                }
+            },
+
+            start: () => {
+                UI.setStatus("Connected. Fetching Account...", "ok");
+
+                // 1. Get Account Info (175)
+                Tunnel.send(175, {}, (res) => { // ProtoGetAccountInformationRes (124)
+                    if (res.Trader) {
+                        App.accountId = res.Trader.TraderId; // Or Login
+                        App.balance = res.Trader.Balance / 100; // Cents? Usually.
+                        App.currency = res.DepositCurrency || "USD"; // Might be in Group?
+
+                        UI.updateAccount();
+                        UI.fetchSymbols();
+                    }
+                });
+            },
+
+            updateAccount: () => {
+                document.getElementById('acc_id').textContent = App.accountId || "---";
+                document.getElementById('acc_bal').textContent = (App.balance).toFixed(2);
+                document.getElementById('acc_curr').textContent = App.currency; // This might need separate call (Group Info 176)
+
+                if (App.currency === "---") {
+                    // Try Fetch Group (176)
+                    Tunnel.send(176, {}, (res) => {
+                        if (res.depositCurrency) {
+                            App.currency = res.depositCurrency;
+                            UI.updateAccount();
+                        }
+                    });
+                }
+            },
+
+            fetchSymbols: () => {
+                UI.setStatus("Fetching Symbols...");
+                // 841: GetLightSymbolList
+                Tunnel.send(841, { includeArchivedSymbols: false }, (res) => { // 842
+                    if (res.Symbol) {
+                        App.symbols = res.Symbol; // { Id, Name }
+                        UI.renderSymbols();
+                        UI.setStatus("Ready", "ok");
+                    }
+                });
+            },
+
+            renderSymbols: () => {
+                const sel = document.getElementById('sym_select');
+                sel.innerHTML = "";
+
+                // Sort by name
+                App.symbols.sort((a, b) => a.Name.localeCompare(b.Name));
+
+                // Populate
+                const def = document.createElement('option');
+                def.text = "Select Symbol";
+                sel.add(def);
+
+                App.symbols.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.Id;
+                    opt.text = s.Name;
+                    sel.add(opt);
+                });
+
+                sel.onchange = () => {
+                    const id = parseInt(sel.value);
+                    const s = App.symbols.find(x => x.Id === id);
+                    if (s) {
+                        App.selectedSymbol = s;
+                        UI.fetchSymbolDetails(id);
+                    }
+                };
+            },
+
+            fetchSymbolDetails: (id) => {
+                UI.setStatus(`Loading ${App.selectedSymbol.Name}...`);
+                // 163: GetSymbolReq (Detail)
+                Tunnel.send(163, { symbolId: [id] }, (res) => { // 164
+                    if (res.symbol && res.symbol.length > 0) {
+                        const det = res.symbol[0];
+                        // TickValue, LotSize etc?
+                        // We need to verify what fields we get.
+
+                        const el = document.getElementById('sym_detail');
+                        el.innerHTML = `
+                          <div class="row"><span class="label">ID</span><span class="value">${det.Id}</span></div>
+                          <div class="row"><span class="label">StepVol</span><span class="value">${det.StepVolume || "?"}</span></div>
+                          <div class="row"><span class="label">MinVol</span><span class="value">${det.MinVolume || "?"}</span></div>
+                      `;
+                        UI.setStatus("Done", "ok");
+                    }
+                });
+            }
         };
 
+        window.onload = UI.init;
     </script>
 </head>
 
 <body>
-    <div id="status" class="status">WAITING 2000...</div>
+    <h1>ALC v1.0</h1>
+    <div id="status" class="status">Waiting for Bridge...</div>
 
-    <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v38: Valid IDs (841/175)
-    </p>
+    <!-- ACCOUNT CARD -->
+    <div class="card">
+        <div class="row">
+            <span class="label">Account</span>
+            <span class="value" id="acc_id">---</span>
+        </div>
+        <div class="row">
+            <span class="label">Balance</span>
+            <span class="value"><span id="acc_bal">0.00</span> <span id="acc_curr"></span></span>
+        </div>
+    </div>
 
-    <div id="logs" style="margin-top:10px;"></div>
+    <!-- SYMBOL CARD -->
+    <div class="card">
+        <span class="label">Symbol</span>
+        <select id="sym_select">
+            <option>Loading...</option>
+        </select>
+        <div id="sym_detail" style="margin-top:10px;"></div>
+    </div>
+
+    <div id="log"></div>
 </body>
 
 </html>
