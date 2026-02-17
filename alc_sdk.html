@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Bridge Hook</title>
+    <title>ALC Stack Tracer</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
             background: #000;
-            color: #fa0;
+            color: #fff;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #fa0;
+            border: 2px solid #fff;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,16 +24,20 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #420;
+            border-bottom: 1px solid #333;
             padding: 4px;
             word-break: break-all;
-            color: #fd0;
+        }
+
+        .trace {
+            color: #aaa;
+            font-size: 9px;
+            white-space: pre-wrap;
         }
 
         .hl {
-            color: #fff;
-            background: #500;
-            padding: 2px;
+            color: #ff0;
+            font-weight: bold;
         }
     </style>
 
@@ -58,121 +62,53 @@
             if (el) el.textContent = msg;
         };
 
-        window.uuidv4 = () => {
-            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
-        };
+        // --- DISPATCH HOOK ---
+        const originalDispatch = window.dispatchEvent;
 
-        // --- BRIDGE HOOK ---
-        window.originalHandle = null;
+        window.dispatchEvent = function (event) {
+            // Check if it's our target event
+            if (event.type === 'message-from-host' || event.type === 'message') {
 
-        window.hookBridge = () => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) return;
+                let payloadType = "???";
+                if (event.data && event.data.payloadType) payloadType = event.data.payloadType;
+                if (event.detail && event.detail.payloadType) payloadType = event.detail.payloadType;
 
-            // 1. Hook handlePluginEvent (Recv?)
-            if (bridge.handlePluginEvent) {
-                window.originalHandle = bridge.handlePluginEvent; // Save original to CALL later
+                window.pushLog(`TRAP: dispatchEvent('${event.type}') [Type:${payloadType}]`, "hl");
 
-                // Overwrite? Only IF it's not a native code binding.
-                // Native bindings often are non-writable or don't work if overwritten.
-                // But we can TRY to see if the host calls IT.
+                // CAPTURE STACK
                 try {
-                    bridge.handlePluginEvent = function (msg) {
-                        window.pushLog("HOOK: Host called handlePluginEvent!", "hl");
-                        window.pushLog("Arg: " + JSON.stringify(msg));
-                    };
-                    window.pushLog("Hooked handlePluginEvent (Success)");
+                    throw new Error("Stack Trace Capture");
                 } catch (e) {
-                    window.pushLog("Hook handlePluginEvent FAILED: " + e.message);
+                    // Filter stack to remove "dispatchEvent" itself
+                    const stack = e.stack.split('\n').slice(1).join('\n');
+                    window.pushLog(`<div class="trace">${stack}</div>`);
                 }
             }
 
-            // 2. Hook handleErrorEvent
-            if (bridge.handleErrorEvent) {
-                try {
-                    bridge.handleErrorEvent = function (msg) {
-                        window.pushLog("HOOK: Host called handleErrorEvent!", "hl");
-                        window.pushLog("Err: " + JSON.stringify(msg));
-                    };
-                    window.pushLog("Hooked handleErrorEvent (Success)");
-                } catch (e) { }
-            }
-        };
-
-        // --- SENDER ---
-        window.sendStrict = (initMsgId) => {
-            window.updateStatus("SENDING STRICT UUIDs...");
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-
-            // Use ORIGINAL handle (the native one) to send
-            const sendFn = window.originalHandle || (bridge && bridge.handlePluginEvent);
-            if (!sendFn) return;
-
-            // 1. CONFIRM
-            try {
-                const msg2001 = {
-                    payloadType: 2001,
-                    clientMsgId: initMsgId,
-                    payload: null
-                };
-                sendFn.call(bridge, JSON.stringify(msg2001)); // Use .call to keep context?
-                window.pushLog(">> SENT 2001 (Strict)");
-            } catch (e) { window.pushLog("Send 2001 Err: " + e.message); }
-
-            // 2. AUTH REQ
-            setTimeout(() => {
-                const reqId = window.uuidv4(); // Proper UUID
-                const msg2100 = {
-                    payloadType: 2100,
-                    clientMsgId: reqId,
-                    payload: {
-                        // payloadType: 999 ? No, standard auth payload maybe?
-                        // Try empty first
-                    }
-                };
-                try {
-                    sendFn.call(bridge, JSON.stringify(msg2100));
-                    window.pushLog(">> SENT 2100 (Strict UUID: " + reqId + ")");
-                } catch (e) { }
-            }, 500);
-        };
-
-        // --- HANDLER ---
-        window.onHostMessage = (msg) => {
-            if (!msg) return;
-
-            if (msg.payloadType === 2000) {
-                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
-
-                // Hook FIRST (to catch immediate callbacks)
-                window.hookBridge();
-
-                // Then Send
-                window.sendStrict(msg.clientMsgId);
-            }
-            else if (msg.payloadType === 2101 || type === 2102 || msg.payloadType === 2500) {
-                window.updateStatus("CONNECTED! DATA RECV!");
-                window.pushLog(`SUCCESS: ${JSON.stringify(msg)}`, "hl");
-            }
+            // Pass through
+            return originalDispatch.apply(window, arguments);
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v23: Hook & UUID");
-            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
+            window.pushLog("Inspector v24: Stack Tracer Ready");
+
+            // Add listener just to confirm receipt
+            window.addEventListener('message-from-host', (e) => {
+                if (e.data?.payloadType === 2000) {
+                    window.updateStatus("2000 CAPTURED! CHECK STACK!");
+                }
+            });
         };
 
     </script>
 </head>
 
 <body>
-    <div id="status" class="status">WAITING 2000...</div>
+    <div id="status" class="status">WAITING FOR EVENT...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v23: Bridge Listeners & Strict IDs
+        Inspector v24: Reverse Engineering the Downlink
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
