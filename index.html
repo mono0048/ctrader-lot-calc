@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC v2.0</title>
+    <title>ALC v3.0 (Fixed)</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -97,14 +97,6 @@
             background: #1565c0;
         }
 
-        button.green {
-            background: #2e7d32;
-        }
-
-        button.red {
-            background: #c62828;
-        }
-
         button:disabled {
             background: #424242;
             color: #757575;
@@ -130,18 +122,6 @@
             color: #757575;
         }
 
-        .status.ok {
-            color: #69f0ae;
-        }
-
-        .status.warn {
-            color: #ffd740;
-        }
-
-        .status.err {
-            color: #ff5252;
-        }
-
         .price {
             font-size: 24px;
             font-family: monospace;
@@ -155,27 +135,43 @@
     </style>
 
     <script>
+        // --- UTILS ---
+        // Helper to request properties case-insensitively (cTrader sends PascalCase)
+        function P(obj, key) {
+            if (!obj) return undefined;
+            // 1. Exact
+            if (obj[key] !== undefined) return obj[key];
+            // 2. PascalCase (key usually camelCase)
+            const pascal = key.charAt(0).toUpperCase() + key.slice(1);
+            if (obj[pascal] !== undefined) return obj[pascal];
+            // 3. camelCase (if key is Pascal)
+            const camel = key.charAt(0).toLowerCase() + key.slice(1);
+            if (obj[camel] !== undefined) return obj[camel];
+
+            return undefined;
+        }
+
         // --- APP STATE ---
         const App = {
             accountId: null,
             balance: 0,
             currency: "USD",
             symbols: [],
-            selectedSymbol: null, // { Id, Name, Digits... }
+            selectedSymbol: null,
             currentPrice: { bid: 0, ask: 0 },
             calculatedVol: 0
         };
 
         // --- TUNNEL LAYER ---
         const Tunnel = {
-            queue: new Map(), // id -> callback
-            listeners: [],    // callbacks(msg)
+            queue: new Map(),
+            listeners: [],
 
             send: (commandId, payload, callback) => {
                 const bridge = window.EventBasedPluginJavaScriptBridge;
                 if (!bridge) return;
 
-                const innerMsgId = "req-" + commandId + "-" + Date.now() + Math.floor(Math.random() * 100);
+                const innerMsgId = "req-" + commandId + "-" + Date.now() + Math.random().toString(36).substring(7);
 
                 const innerMsg = {
                     payloadType: commandId,
@@ -185,7 +181,6 @@
 
                 if (callback) Tunnel.queue.set(innerMsgId, callback);
 
-                // Wrap in 2100
                 const wrapper = {
                     payloadType: 2100,
                     clientMsgId: "wrap-" + innerMsgId,
@@ -195,44 +190,42 @@
                 try {
                     bridge.handlePluginEvent(JSON.stringify(wrapper));
                 } catch (e) {
-                    console.error("Send Error", e);
                     UI.log("Send Err: " + e.message);
                 }
             },
 
             onMessage: (wrapperMsg) => {
-                // Unwrap 2101 (Success) OR 2102 (Event/Error tunnel?) -> Actually events usually come in 2102?
-                // Wait, previous logs showed 2101 for ACK.
-                // But EVENTS (like quotes) might come as 2102 (ServerDataEvent).
-
                 let innerMsg = null;
-
                 try {
                     if (wrapperMsg.payloadType === 2101 || wrapperMsg.payloadType === 2102) {
-                        // Check payload format
                         let raw = wrapperMsg.payload;
+                        // Handle both object and string data
                         if (raw && raw.data && typeof raw.data === 'string') {
                             innerMsg = JSON.parse(raw.data);
-                        } else if (raw && raw.payload && typeof raw.payload === 'object') {
-                            innerMsg = raw; // Already unwrapped? Unlikely based on fuzzer.
+                        } else if (raw && typeof raw === 'object') {
+                            // Check if raw is the inner message (sometimes flattened?)
+                            // If it has PayloadType inside...
+                            if (raw.PayloadType || raw.payloadType) innerMsg = raw;
+                            else if (raw.payload) innerMsg = raw; // Nested?
                         }
                     }
                 } catch (e) { UI.log("Unwrap Err: " + e.message); }
 
                 if (!innerMsg) {
-                    // If it's a direct System message
                     if (wrapperMsg.payloadType === 2500) UI.log("SysErr: " + wrapperMsg.payload);
                     return;
                 }
 
-                // Handle Callback
-                if (Tunnel.queue.has(innerMsg.clientMsgId)) {
-                    const cb = Tunnel.queue.get(innerMsg.clientMsgId);
-                    Tunnel.queue.delete(innerMsg.clientMsgId);
-                    cb(innerMsg.payload);
+                // MsgID check (Pascal or camel)
+                const msgId = P(innerMsg, "clientMsgId");
+                const payload = P(innerMsg, "payload");
+
+                if (msgId && Tunnel.queue.has(msgId)) {
+                    const cb = Tunnel.queue.get(msgId);
+                    Tunnel.queue.delete(msgId);
+                    cb(payload);
                 }
 
-                // Handle Global Listeners (Events)
                 Tunnel.listeners.forEach(l => l(innerMsg));
             },
 
@@ -257,40 +250,39 @@
 
                 const riskAmt = App.balance * (riskP / 100);
 
-                // SIMPLIFIED CALCULATION FOR DEMO
-                // Standard Lot = 100,000 units.
-                // 1 Pip (0.01 or 0.0001) value varies.
-                // Approx: Volume = RiskAmt / (SL_Pips * PipValue_Per_1_Vol)
-
-                // We need correct Pip Value.
-                // For USD Account & XXXUSD Pair: 1 Lot Pip Value = $10.
-                // For USD Account & USDJPY Pair: 1 Lot Pip Value = $1000 / Rate.
-
-                // Let's assume PipVal=$10 per Lot (standard) for V2.0 if metadata missing.
+                // Pip Value approx
                 let pipValPerLot = 10;
+                if (App.selectedSymbol.Name.includes("JPY") && App.currentPrice.bid > 0) {
+                    pipValPerLot = 1000 / App.currentPrice.bid;
+                }
+                // For now, simple approximation. In real app, we need conversion rates.
 
-                if (App.selectedSymbol.Name.includes("JPY")) {
-                    if (App.currentPrice.bid > 0) {
-                        pipValPerLot = 1000 / App.currentPrice.bid; // Approx for USDJPY
-                    }
+                let lots = 0;
+                if (pipValPerLot > 0) {
+                    lots = riskAmt / (slPips * pipValPerLot);
                 }
 
-                // Formula: riskAmt / (slPips * pipValPerOneLot)
-                // But slPips might be points? User enters PIPS.
+                // --- NORMALIZATION (CRITICAL FIX) ---
+                // 1. Convert to Cents (Units * 100)
+                // Assumed 1 Lot = 100,000 units = 10,000,000 cents
+                let rawCents = lots * 100000 * 100;
 
-                const lots = riskAmt / (slPips * pipValPerLot);
-                // Convert to Cents (Volume)
-                // 1 Lot = 100,000 cents? No. 1 Lot = 100000 units.
-                // cTrader Volume is usually in Cents (Units * 100)? Or just Units?
-                // "Volume: Trade Volume, specified in cents (*100)" -> So 1 Lot (100k) = 10,000,000 "cents".
+                // 2. Get Step Volume (from Symbol Details)
+                // Default 1000 cents (0.01 lot) if missing
+                const stepVol = App.selectedSymbol.StepVolume || 1000;
+                const minVol = App.selectedSymbol.MinVolume || 1000;
 
-                const volCents = Math.floor(lots * 100000 * 100);
+                // 3. Round to nearest Step
+                let normCents = Math.floor(rawCents / stepVol) * stepVol;
 
-                // Normalize to Step Volume? (Assume 1000 min)
-                // Let's just output Lots for UI
+                // 4. Check Min
+                if (normCents < minVol) normCents = 0; // Or minVol? Better 0 to warn.
 
-                App.calculatedVol = volCents;
-                Logic.setResult(lots.toFixed(2), `Risk: $${riskAmt.toFixed(2)}`);
+                App.calculatedVol = normCents;
+
+                // Display Lots
+                const dispLots = normCents / (100000 * 100);
+                Logic.setResult(dispLots.toFixed(2), `Risk: $${riskAmt.toFixed(2)}`);
             },
 
             setResult: (lots, msg) => {
@@ -299,16 +291,13 @@
 
                 const btn = document.getElementById('btn_trade');
                 btn.disabled = (parseFloat(lots) <= 0);
-                if (!btn.disabled) btn.textContent = `BUY ${lots} LOTS`;
-                else btn.textContent = "TRADE";
             },
 
             placeOrder: () => {
                 if (App.calculatedVol <= 0) return;
 
-                UI.log("Sending Order...");
+                UI.log(`Sending Order: ${App.calculatedVol} cents...`);
 
-                // 143: ProtoCreateNewOrderReq
                 const cmd = {
                     symbolId: App.selectedSymbol.Id,
                     orderType: 1, // MARKET
@@ -316,11 +305,19 @@
                     volume: App.calculatedVol
                 };
 
-                Tunnel.send(143, cmd, (res) => {
+                Tunnel.send(143, cmd, (res) => { // ProtoCreateNewOrderReq
+                    const errCode = P(res, "errorCode");
+                    if (errCode) alert("Order Failed: " + errCode);
+                    else {
+                        // Check if it was OrderErrorEvent
+                        const pType = P(res, "payloadType"); // OR Type name
+                        if (pType === "PROTO_ORDER_ERROR_EVENT") { // Name from logs
+                            alert("Order Error: " + P(res, "errorCode"));
+                        } else {
+                            alert("Order Sent!");
+                        }
+                    }
                     UI.log("Order Res: " + JSON.stringify(res));
-                    // 2126: Execution Event usually follows
-                    if (res.errorCode) alert("Order Failed: " + res.errorCode);
-                    else alert("Order Sent!");
                 });
             }
         };
@@ -328,11 +325,9 @@
         // --- UI LAYER ---
         const UI = {
             init: () => {
-                // Handle Bridge
                 window.addEventListener('message-from-host', (e) => {
                     const msg = e.data;
                     if (msg.payloadType === 2000) {
-                        // Ack Heartbeat
                         try {
                             window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({
                                 payloadType: 2001,
@@ -350,27 +345,26 @@
                     }
                 });
 
-                // Inputs
                 document.getElementById('in_risk').oninput = Logic.calcVol;
                 document.getElementById('in_sl').oninput = Logic.calcVol;
                 document.getElementById('btn_trade').onclick = Logic.placeOrder;
 
-                // Events
                 Tunnel.listen((msg) => {
+                    // PascalCase check
+                    const type = P(msg, "payloadType");
+
                     // 3: ProtoQuoteEvent
-                    if (msg.payloadType === 3) {
-                        // payload: { symbolId, bid, ask } (Integers * 100000)
-                        if (App.selectedSymbol && msg.payload.symbolId === App.selectedSymbol.Id) {
-                            const bid = msg.payload.bid / 100000;
-                            const ask = msg.payload.ask / 100000;
-                            if (bid) App.currentPrice.bid = bid;
-                            if (ask) App.currentPrice.ask = ask;
+                    if (type === 3 || type === "PROTO_QUOTE_EVENT") {
+                        const p = P(msg, "payload");
+                        const symId = P(p, "symbolId");
+
+                        if (App.selectedSymbol && symId === App.selectedSymbol.Id) {
+                            const bid = P(p, "bid");
+                            const ask = P(p, "ask");
+                            if (bid) App.currentPrice.bid = bid / 100000;
+                            if (ask) App.currentPrice.ask = ask / 100000;
                             UI.renderPrice();
                         }
-                    }
-                    // 300: ExecutionEvent
-                    if (msg.payloadType === 300) {
-                        UI.log("Exec: " + (msg.payload.executionType || "Unknown"));
                     }
                 });
             },
@@ -378,9 +372,8 @@
             log: (txt) => {
                 const el = document.getElementById('log');
                 if (el) {
-                    // Shorten
-                    if (txt.length > 100) txt = txt.substring(0, 100) + "...";
-                    el.textContent = `> ${txt}\n` + el.textContent.substring(0, 500);
+                    if (txt.length > 200) txt = txt.substring(0, 200) + "...";
+                    el.textContent = `> ${txt}\n` + el.textContent.substring(0, 1000);
                 }
             },
 
@@ -389,10 +382,11 @@
 
                 // 175: GetAccount
                 Tunnel.send(175, {}, (res) => {
-                    if (res.Trader) {
-                        App.accountId = res.Trader.TraderId;
-                        App.balance = res.Trader.Balance / 100;
-                        App.currency = res.DepositCurrency || "USD";
+                    const trader = P(res, "trader");
+                    if (trader) {
+                        App.accountId = P(trader, "traderId") || P(trader, "login");
+                        App.balance = (P(trader, "balance") || 0) / 100;
+                        App.currency = P(res, "depositCurrency") || "USD";
                         UI.updateAccount();
                         UI.fetchSymbols();
                     } else {
@@ -408,8 +402,9 @@
 
             fetchSymbols: () => {
                 Tunnel.send(841, { includeArchivedSymbols: false }, (res) => {
-                    if (res.Symbol) {
-                        App.symbols = res.Symbol;
+                    const symbols = P(res, "symbol");
+                    if (symbols) {
+                        App.symbols = symbols; // Array
                         UI.renderSymbolSelector();
                     }
                 });
@@ -418,12 +413,21 @@
             renderSymbolSelector: () => {
                 const sel = document.getElementById('sym_select');
                 sel.innerHTML = "<option>Select Symbol</option>";
-                App.symbols.sort((a, b) => a.Name.localeCompare(b.Name));
+                // PascalCase 'Name'
+                App.symbols.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
 
                 App.symbols.forEach(s => {
                     const opt = document.createElement('option');
-                    opt.value = s.Id;
-                    opt.text = s.Name;
+                    // PascalCase 'Id'
+                    const id = P(s, "id");
+                    const name = P(s, "name");
+                    opt.value = id;
+                    opt.text = name;
+
+                    // Normalize object for App use
+                    s.Id = id;
+                    s.Name = name;
+
                     sel.add(opt);
                 });
 
@@ -441,18 +445,21 @@
                 UI.log("Selected: " + s.Name);
                 document.getElementById('lbl_price').textContent = "---";
 
-                // 1. Subscribe (601)
-                // symbolId is RepeatedField, so array
-                // enableStaleQuotesFiltering: true?
                 Tunnel.send(601, { symbolId: [s.Id], subscribeToSpotTimestamp: true }, (res) => {
-                    UI.log("Subscribed: " + s.Name);
+                    // Subscribed
                 });
 
-                // 2. Fetch Details (163) - Retry for Metadata
+                // 163: Details
                 Tunnel.send(163, { symbolId: [s.Id] }, (res) => {
-                    if (res.symbol && res.symbol.length > 0) {
-                        const det = res.symbol[0];
-                        UI.log("Det: " + JSON.stringify(det));
+                    const symbolList = P(res, "symbol");
+                    if (symbolList && symbolList.length > 0) {
+                        const det = symbolList[0];
+                        // Merge details into App.selectedSymbol
+                        App.selectedSymbol.StepVolume = P(det, "stepVolume");
+                        App.selectedSymbol.MinVolume = P(det, "minVolume");
+                        UI.log(`Details: Step=${App.selectedSymbol.StepVolume}`);
+                        // Recalc to apply step
+                        Logic.calcVol();
                     } else {
                         UI.log("DetErr: " + JSON.stringify(res));
                     }
@@ -462,7 +469,6 @@
             renderPrice: () => {
                 const p = App.currentPrice;
                 document.getElementById('lbl_price').textContent = `${p.bid} / ${p.ask}`;
-                // Re-calc if needed
                 Logic.calcVol();
             }
         };
@@ -473,7 +479,7 @@
 
 <body>
     <div class="row">
-        <h1>ALC v2.0</h1>
+        <h1>ALC v3.0</h1>
         <div id="status" class="status">Connecting...</div>
     </div>
 
@@ -523,7 +529,7 @@
         <button id="btn_trade" disabled style="margin-top:15px; padding:15px;">TRADE</button>
     </div>
 
-    <div id="log">Logs will appear here...</div>
+    <div id="log"></div>
 </body>
 
 </html>
