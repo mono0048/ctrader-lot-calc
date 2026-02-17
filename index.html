@@ -3,532 +3,459 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC v3.0 (Fixed)</title>
+    <title>Auto Lot Calc</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
             background: #121212;
-            color: #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            padding: 20px;
+            color: #f5f5f5;
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 24px;
             margin: 0;
-        }
-
-        h1 {
-            font-size: 20px;
-            margin: 0 0 15px 0;
-            color: #64b5f6;
-            font-weight: 600;
         }
 
         .card {
             background: #1e1e1e;
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
         }
 
         .label {
             font-size: 11px;
-            color: #9e9e9e;
-            margin-bottom: 4px;
-            display: block;
+            color: #888;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+            display: block;
+            font-weight: 600;
         }
 
         .value {
-            font-size: 18px;
-            font-weight: bold;
+            font-size: 22px;
+            font-weight: 700;
             color: #fff;
+        }
+
+        .mono {
+            font-family: "Roboto Mono", monospace;
+            letter-spacing: -0.5px;
         }
 
         .row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
         }
 
-        .row:last-child {
-            margin-bottom: 0;
+        .col {
+            display: flex;
+            flex-direction: column;
         }
 
+        /* INPUTS */
         input,
         select,
         button {
             width: 100%;
             box-sizing: border-box;
-            padding: 12px;
-            background: #2c2c2c;
-            border: 1px solid #424242;
+            padding: 16px;
+            background: #2a2a2a;
+            border: 1px solid #333;
             color: #fff;
-            border-radius: 8px;
-            font-size: 16px;
+            border-radius: 12px;
+            font-size: 18px;
             outline: none;
-            transition: 0.2s;
+            -webkit-appearance: none;
         }
 
         input:focus,
         select:focus {
-            border-color: #64b5f6;
+            border-color: #448aff;
             background: #333;
         }
 
-        .btn-group {
-            display: flex;
-            gap: 10px;
+        select {
+            background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+            background-size: 12px;
+            padding-right: 40px;
+        }
+
+        /* ACTION BTN */
+        button.trade {
+            background: linear-gradient(135deg, #2962ff, #448aff);
+            border: none;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 4px 15px rgba(41, 98, 255, 0.4);
             margin-top: 10px;
         }
 
-        button {
-            background: #1976d2;
-            border: none;
-            font-weight: bold;
-            cursor: pointer;
-            text-transform: uppercase;
-            font-size: 14px;
-            letter-spacing: 0.5px;
-        }
-
-        button:active {
-            transform: translateY(1px);
-            background: #1565c0;
+        button.trade:active {
+            transform: scale(0.98);
+            box-shadow: 0 2px 8px rgba(41, 98, 255, 0.3);
         }
 
         button:disabled {
-            background: #424242;
-            color: #757575;
-            cursor: not-allowed;
-            transform: none;
+            background: #333;
+            color: #555;
+            box-shadow: none;
+        }
+
+        /* MODAL */
+        #modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background: #1e1e1e;
+            padding: 30px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 80%;
+            border: 1px solid #333;
+        }
+
+        .success-icon {
+            color: #00e676;
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        #log-toggle {
+            font-size: 10px;
+            color: #444;
+            text-align: center;
+            margin-top: 30px;
         }
 
         #log {
+            display: none;
             font-family: "JetBrains Mono", monospace;
-            font-size: 10px;
-            color: #757575;
-            margin-top: 20px;
+            font-size: 9px;
+            color: #666;
             white-space: pre-wrap;
-            word-break: break-all;
+            margin-top: 10px;
             border-top: 1px solid #333;
             padding-top: 10px;
-        }
-
-        .status {
-            font-size: 12px;
-            margin-bottom: 10px;
-            text-align: right;
-            color: #757575;
-        }
-
-        .price {
-            font-size: 24px;
-            font-family: monospace;
-            color: #fff;
-            text-align: center;
-            padding: 10px;
-            background: #000;
-            border-radius: 8px;
-            margin-top: 5px;
         }
     </style>
 
     <script>
-        // --- UTILS ---
-        // Helper to request properties case-insensitively (cTrader sends PascalCase)
+        // --- HELPERS ---
         function P(obj, key) {
             if (!obj) return undefined;
-            // 1. Exact
             if (obj[key] !== undefined) return obj[key];
-            // 2. PascalCase (key usually camelCase)
             const pascal = key.charAt(0).toUpperCase() + key.slice(1);
             if (obj[pascal] !== undefined) return obj[pascal];
-            // 3. camelCase (if key is Pascal)
             const camel = key.charAt(0).toLowerCase() + key.slice(1);
             if (obj[camel] !== undefined) return obj[camel];
-
             return undefined;
         }
 
-        // --- APP STATE ---
+        // --- STATE ---
         const App = {
-            accountId: null,
+            accountId: "---",
             balance: 0,
             currency: "USD",
-            symbols: [],
-            selectedSymbol: null,
-            currentPrice: { bid: 0, ask: 0 },
-            calculatedVol: 0
+            symbol: null,
+            price: { bid: 0, ask: 0 },
+            volUnits: 0,
+            volLots: 0
         };
 
-        // --- TUNNEL LAYER ---
+        // --- TUNNEL ---
         const Tunnel = {
             queue: new Map(),
-            listeners: [],
+            subs: new Set(),
+            send: (id, pl, cb) => {
+                if (!window.EventBasedPluginJavaScriptBridge) return;
+                const mid = "req-" + id + "-" + Date.now() + Math.random().toString(36).substr(2, 5);
+                if (cb) Tunnel.queue.set(mid, cb);
 
-            send: (commandId, payload, callback) => {
-                const bridge = window.EventBasedPluginJavaScriptBridge;
-                if (!bridge) return;
-
-                const innerMsgId = "req-" + commandId + "-" + Date.now() + Math.random().toString(36).substring(7);
-
-                const innerMsg = {
-                    payloadType: commandId,
-                    clientMsgId: innerMsgId,
-                    payload: payload || {}
-                };
-
-                if (callback) Tunnel.queue.set(innerMsgId, callback);
-
-                const wrapper = {
+                const wrap = {
                     payloadType: 2100,
-                    clientMsgId: "wrap-" + innerMsgId,
-                    payload: innerMsg
+                    clientMsgId: "w-" + mid,
+                    payload: { payloadType: id, clientMsgId: mid, payload: pl || {} }
                 };
-
-                try {
-                    bridge.handlePluginEvent(JSON.stringify(wrapper));
-                } catch (e) {
-                    UI.log("Send Err: " + e.message);
-                }
+                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(wrap)); } catch (e) { }
             },
-
-            onMessage: (wrapperMsg) => {
-                let innerMsg = null;
+            onMsg: (wrap) => {
+                let inn = null;
                 try {
-                    if (wrapperMsg.payloadType === 2101 || wrapperMsg.payloadType === 2102) {
-                        let raw = wrapperMsg.payload;
-                        // Handle both object and string data
-                        if (raw && raw.data && typeof raw.data === 'string') {
-                            innerMsg = JSON.parse(raw.data);
-                        } else if (raw && typeof raw === 'object') {
-                            // Check if raw is the inner message (sometimes flattened?)
-                            // If it has PayloadType inside...
-                            if (raw.PayloadType || raw.payloadType) innerMsg = raw;
-                            else if (raw.payload) innerMsg = raw; // Nested?
-                        }
+                    if (wrap.payloadType === 2101 || wrap.payloadType === 2102) {
+                        const py = wrap.payload;
+                        inn = (py && py.data) ? JSON.parse(py.data) : py;
                     }
-                } catch (e) { UI.log("Unwrap Err: " + e.message); }
+                } catch (e) { }
+                if (!inn) return;
 
-                if (!innerMsg) {
-                    if (wrapperMsg.payloadType === 2500) UI.log("SysErr: " + wrapperMsg.payload);
-                    return;
+                const mid = P(inn, "clientMsgId");
+                const pl = P(inn, "payload");
+
+                if (mid && Tunnel.queue.has(mid)) {
+                    Tunnel.queue.get(mid)(pl);
+                    Tunnel.queue.delete(mid);
                 }
 
-                // MsgID check (Pascal or camel)
-                const msgId = P(innerMsg, "clientMsgId");
-                const payload = P(innerMsg, "payload");
-
-                if (msgId && Tunnel.queue.has(msgId)) {
-                    const cb = Tunnel.queue.get(msgId);
-                    Tunnel.queue.delete(msgId);
-                    cb(payload);
-                }
-
-                Tunnel.listeners.forEach(l => l(innerMsg));
-            },
-
-            listen: (cb) => {
-                Tunnel.listeners.push(cb);
+                // Push Events
+                const type = P(inn, "payloadType");
+                if (type === 3 || type === "PROTO_QUOTE_EVENT") Logic.onQuote(pl);
             }
         };
 
         // --- LOGIC ---
         const Logic = {
-            calcVol: () => {
-                if (!App.selectedSymbol) return;
-                if (!App.balance) return;
-
-                const riskP = parseFloat(document.getElementById('in_risk').value) || 0;
-                const slPips = parseFloat(document.getElementById('in_sl').value) || 0;
-
-                if (riskP <= 0 || slPips <= 0) {
-                    Logic.setResult(0, "Input Risk & SL");
-                    return;
-                }
-
-                const riskAmt = App.balance * (riskP / 100);
-
-                // Pip Value approx
-                let pipValPerLot = 10;
-                if (App.selectedSymbol.Name.includes("JPY") && App.currentPrice.bid > 0) {
-                    pipValPerLot = 1000 / App.currentPrice.bid;
-                }
-                // For now, simple approximation. In real app, we need conversion rates.
-
-                let lots = 0;
-                if (pipValPerLot > 0) {
-                    lots = riskAmt / (slPips * pipValPerLot);
-                }
-
-                // --- NORMALIZATION (CRITICAL FIX) ---
-                // 1. Convert to Cents (Units * 100)
-                // Assumed 1 Lot = 100,000 units = 10,000,000 cents
-                let rawCents = lots * 100000 * 100;
-
-                // 2. Get Step Volume (from Symbol Details)
-                // Default 1000 cents (0.01 lot) if missing
-                const stepVol = App.selectedSymbol.StepVolume || 1000;
-                const minVol = App.selectedSymbol.MinVolume || 1000;
-
-                // 3. Round to nearest Step
-                let normCents = Math.floor(rawCents / stepVol) * stepVol;
-
-                // 4. Check Min
-                if (normCents < minVol) normCents = 0; // Or minVol? Better 0 to warn.
-
-                App.calculatedVol = normCents;
-
-                // Display Lots
-                const dispLots = normCents / (100000 * 100);
-                Logic.setResult(dispLots.toFixed(2), `Risk: $${riskAmt.toFixed(2)}`);
-            },
-
-            setResult: (lots, msg) => {
-                document.getElementById('out_lots').textContent = lots + " Lots";
-                document.getElementById('out_msg').textContent = msg;
-
-                const btn = document.getElementById('btn_trade');
-                btn.disabled = (parseFloat(lots) <= 0);
-            },
-
-            placeOrder: () => {
-                if (App.calculatedVol <= 0) return;
-
-                UI.log(`Sending Order: ${App.calculatedVol} cents...`);
-
-                const cmd = {
-                    symbolId: App.selectedSymbol.Id,
-                    orderType: 1, // MARKET
-                    tradeSide: 1, // BUY
-                    volume: App.calculatedVol
-                };
-
-                Tunnel.send(143, cmd, (res) => { // ProtoCreateNewOrderReq
-                    const errCode = P(res, "errorCode");
-                    if (errCode) alert("Order Failed: " + errCode);
-                    else {
-                        // Check if it was OrderErrorEvent
-                        const pType = P(res, "payloadType"); // OR Type name
-                        if (pType === "PROTO_ORDER_ERROR_EVENT") { // Name from logs
-                            alert("Order Error: " + P(res, "errorCode"));
-                        } else {
-                            alert("Order Sent!");
-                        }
-                    }
-                    UI.log("Order Res: " + JSON.stringify(res));
-                });
-            }
-        };
-
-        // --- UI LAYER ---
-        const UI = {
             init: () => {
-                window.addEventListener('message-from-host', (e) => {
-                    const msg = e.data;
-                    if (msg.payloadType === 2000) {
-                        try {
-                            window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({
-                                payloadType: 2001,
-                                clientMsgId: msg.clientMsgId,
-                                payload: null
-                            }));
-                        } catch (e) { }
-
-                        if (!App.ready) {
-                            App.ready = true;
-                            UI.start();
-                        }
-                    } else {
-                        Tunnel.onMessage(msg);
-                    }
+                window.addEventListener('message-from-host', e => {
+                    const m = e.data;
+                    if (m.payloadType === 2000) {
+                        // Heartbeat
+                        try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: m.clientMsgId, payload: null })); } catch (e) { }
+                        if (!App.ready) { App.ready = true; Logic.start(); }
+                    } else { Tunnel.onMsg(m); }
                 });
 
-                document.getElementById('in_risk').oninput = Logic.calcVol;
-                document.getElementById('in_sl').oninput = Logic.calcVol;
-                document.getElementById('btn_trade').onclick = Logic.placeOrder;
-
-                Tunnel.listen((msg) => {
-                    // PascalCase check
-                    const type = P(msg, "payloadType");
-
-                    // 3: ProtoQuoteEvent
-                    if (type === 3 || type === "PROTO_QUOTE_EVENT") {
-                        const p = P(msg, "payload");
-                        const symId = P(p, "symbolId");
-
-                        if (App.selectedSymbol && symId === App.selectedSymbol.Id) {
-                            const bid = P(p, "bid");
-                            const ask = P(p, "ask");
-                            if (bid) App.currentPrice.bid = bid / 100000;
-                            if (ask) App.currentPrice.ask = ask / 100000;
-                            UI.renderPrice();
-                        }
-                    }
-                });
-            },
-
-            log: (txt) => {
-                const el = document.getElementById('log');
-                if (el) {
-                    if (txt.length > 200) txt = txt.substring(0, 200) + "...";
-                    el.textContent = `> ${txt}\n` + el.textContent.substring(0, 1000);
-                }
+                ['in_risk', 'in_sl'].forEach(id => document.getElementById(id).oninput = Logic.calc);
+                document.getElementById('btn_trade').onclick = Logic.trade;
             },
 
             start: () => {
-                document.getElementById('status').textContent = "Connected";
+                document.getElementById('status').innerText = "ONLINE";
+                document.getElementById('status').style.color = "#00e676";
 
-                // 175: GetAccount
-                Tunnel.send(175, {}, (res) => {
-                    const trader = P(res, "trader");
-                    if (trader) {
-                        App.accountId = P(trader, "traderId") || P(trader, "login");
-                        App.balance = (P(trader, "balance") || 0) / 100;
+                Tunnel.send(175, {}, res => {
+                    const t = P(res, "trader");
+                    if (t) {
+                        App.accountId = P(t, "login");
+                        App.balance = (P(t, "balance") || 0) / 100;
                         App.currency = P(res, "depositCurrency") || "USD";
-                        UI.updateAccount();
-                        UI.fetchSymbols();
-                    } else {
-                        UI.log("AccErr: " + JSON.stringify(res));
+                        UI.updateAcc();
+                        Logic.loadSyms();
                     }
                 });
             },
 
-            updateAccount: () => {
-                document.getElementById('acc_id').textContent = App.accountId;
-                document.getElementById('acc_bal').textContent = App.balance.toFixed(2) + " " + App.currency;
-            },
-
-            fetchSymbols: () => {
-                Tunnel.send(841, { includeArchivedSymbols: false }, (res) => {
-                    const symbols = P(res, "symbol");
-                    if (symbols) {
-                        App.symbols = symbols; // Array
-                        UI.renderSymbolSelector();
-                    }
-                });
-            },
-
-            renderSymbolSelector: () => {
-                const sel = document.getElementById('sym_select');
-                sel.innerHTML = "<option>Select Symbol</option>";
-                // PascalCase 'Name'
-                App.symbols.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
-
-                App.symbols.forEach(s => {
-                    const opt = document.createElement('option');
-                    // PascalCase 'Id'
-                    const id = P(s, "id");
-                    const name = P(s, "name");
-                    opt.value = id;
-                    opt.text = name;
-
-                    // Normalize object for App use
-                    s.Id = id;
-                    s.Name = name;
-
-                    sel.add(opt);
-                });
-
-                sel.onchange = () => {
-                    const id = parseInt(sel.value);
-                    const s = App.symbols.find(x => x.Id === id);
+            loadSyms: () => {
+                Tunnel.send(841, { includeArchivedSymbols: false }, res => {
+                    const s = P(res, "symbol");
                     if (s) {
-                        App.selectedSymbol = s;
-                        UI.selectSymbol(s);
+                        s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
+                        UI.fillSyms(s);
                     }
+                });
+            },
+
+            selectSym: (id) => {
+                // Unsub old?
+                Tunnel.send(163, { symbolId: [id] }, res => {
+                    const l = P(res, "symbol");
+                    if (l && l[0]) {
+                        App.symbol = l[0]; // cache details
+                        // Normalize Step (Handle Cents vs Units confusion)
+                        // If Step > 10000, assumes Cents (100k = 1 Lot). Convert to Units (1000).
+                        // If Step <= 10000, assume Units.
+                        let step = P(App.symbol, "stepVolume") || 1000;
+                        if (step > 10000) step = step / 100; // Fix for "Step=100000" log
+                        App.symbol._step = step;
+
+                        UI.log(`Selected ${P(App.symbol, "name")} (Step: ${step})`);
+
+                        // Sub
+                        Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: false });
+                        Logic.calc();
+                    }
+                });
+            },
+
+            onQuote: (q) => {
+                const sid = P(q, "symbolId");
+                if (App.symbol && P(App.symbol, "id") === sid) {
+                    const bid = P(q, "bid");
+                    if (bid) {
+                        App.price.bid = bid / 100000;
+                        UI.updatePrice();
+                        Logic.calc();
+                    }
+                }
+            },
+
+            calc: () => {
+                if (!App.symbol || !App.price.bid) return;
+                const r = parseFloat(document.getElementById('in_risk').value);
+                const sl = parseFloat(document.getElementById('in_sl').value);
+                if (!r || !sl) return;
+
+                const riskAmt = App.balance * (r / 100);
+
+                // Pip Val (Approx for Demo)
+                let pv = 10;
+                const name = P(App.symbol, "name");
+                if (name.indexOf("JPY") !== -1) pv = 1000 / App.price.bid;
+
+                let lots = riskAmt / (sl * pv);
+
+                // NORMALIZE
+                // 1 Lot = 100,000 Units.
+                let units = lots * 100000;
+                const step = App.symbol._step || 1000;
+
+                units = Math.floor(units / step) * step;
+
+                // Min check
+                const min = P(App.symbol, "minVolume") || 1000;
+                // if(units < min) units = 0; // Optional: Allow 0 to disable button
+
+                App.volUnits = units;
+                App.volLots = units / 100000;
+
+                UI.updateCalc(riskAmt);
+            },
+
+            trade: () => {
+                if (App.volUnits <= 0) return;
+
+                document.getElementById('btn_trade').innerText = "SENDING...";
+                document.getElementById('btn_trade').disabled = true;
+
+                const cmd = {
+                    symbolId: P(App.symbol, "id"),
+                    orderType: 1, // Market
+                    tradeSide: 1, // Buy
+                    volume: App.volUnits // Send UNITS (e.g. 76000)
                 };
-            },
 
-            selectSymbol: (s) => {
-                UI.log("Selected: " + s.Name);
-                document.getElementById('lbl_price').textContent = "---";
+                Tunnel.send(143, cmd, res => {
+                    document.getElementById('btn_trade').innerText = "TRADE";
+                    document.getElementById('btn_trade').disabled = false;
 
-                Tunnel.send(601, { symbolId: [s.Id], subscribeToSpotTimestamp: true }, (res) => {
-                    // Subscribed
-                });
-
-                // 163: Details
-                Tunnel.send(163, { symbolId: [s.Id] }, (res) => {
-                    const symbolList = P(res, "symbol");
-                    if (symbolList && symbolList.length > 0) {
-                        const det = symbolList[0];
-                        // Merge details into App.selectedSymbol
-                        App.selectedSymbol.StepVolume = P(det, "stepVolume");
-                        App.selectedSymbol.MinVolume = P(det, "minVolume");
-                        UI.log(`Details: Step=${App.selectedSymbol.StepVolume}`);
-                        // Recalc to apply step
-                        Logic.calcVol();
-                    } else {
-                        UI.log("DetErr: " + JSON.stringify(res));
+                    const err = P(res, "errorCode");
+                    if (err) UI.showModal("ERROR", err);
+                    else {
+                        // Verify PayloadType?
+                        UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
                     }
                 });
-            },
-
-            renderPrice: () => {
-                const p = App.currentPrice;
-                document.getElementById('lbl_price').textContent = `${p.bid} / ${p.ask}`;
-                Logic.calcVol();
             }
         };
 
-        window.onload = UI.init;
+        // --- UI ---
+        const UI = {
+            log: (t) => {
+                const l = document.getElementById('log');
+                l.textContent = `> ${t}\n` + l.textContent.substring(0, 200);
+            },
+            updateAcc: () => {
+                document.getElementById('acc_id').textContent = App.accountId;
+                document.getElementById('acc_bal').textContent = App.balance.toFixed(2) + " " + App.currency;
+            },
+            fillSyms: (list) => {
+                const s = document.getElementById('sym_select');
+                s.innerHTML = "<option>Select Symbol</option>";
+                list.forEach(i => {
+                    const o = document.createElement('option');
+                    o.value = P(i, "id");
+                    o.text = P(i, "name");
+                    s.add(o);
+                });
+                s.onchange = () => Logic.selectSym(parseInt(s.value));
+            },
+            updatePrice: () => {
+                document.getElementById('lbl_price').textContent = App.price.bid.toFixed(3);
+            },
+            updateCalc: (risk) => {
+                document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
+                document.getElementById('out_risk').textContent = "Risk: $" + risk.toFixed(2);
+                document.getElementById('btn_trade').disabled = (App.volUnits <= 0);
+            },
+            showModal: (title, msg) => {
+                const m = document.getElementById('modal');
+                m.style.display = "flex";
+                const c = m.querySelector('.modal-content');
+                c.innerHTML = `
+                <div class="success-icon">${title === 'SUCCESS' ? '✔' : '⚠'}</div>
+                <h3 style="margin:0 0 10px 0">${title}</h3>
+                <p>${msg}</p>
+                <button onclick="document.getElementById('modal').style.display='none'" style="margin-top:15px; background:#444">CLOSE</button>
+            `;
+            }
+        };
+
+        window.onload = Logic.init;
     </script>
 </head>
 
 <body>
-    <div class="row">
-        <h1>ALC v3.0</h1>
-        <div id="status" class="status">Connecting...</div>
+    <div class="row" style="margin-bottom:10px">
+        <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
+                style="color:#fff">CALC</span></div>
+        <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
-    <!-- ACCOUNT -->
-    <div class="card">
+    <div class="card" style="background: linear-gradient(135deg, #1e1e1e, #252525);">
         <div class="row">
-            <div>
+            <div class="col">
                 <span class="label">Balance</span>
-                <div class="value" id="acc_bal">---</div>
+                <div class="value mono" id="acc_bal">---</div>
             </div>
-            <div style="text-align:right">
+            <div class="col" style="align-items:flex-end">
                 <span class="label">Account</span>
-                <div class="value" id="acc_id">---</div>
+                <div class="value" id="acc_id" style="font-size:16px; color:#888;">---</div>
             </div>
         </div>
     </div>
 
-    <!-- INPUTS -->
     <div class="card">
-        <span class="label">Symbol</span>
+        <span class="label">Trading Pair</span>
         <select id="sym_select">
             <option>Loading...</option>
         </select>
 
-        <div class="price" id="lbl_price">--- / ---</div>
-
-        <div class="row" style="gap:10px; margin-top:15px;">
-            <div style="flex:1">
-                <span class="label">Risk %</span>
-                <input type="number" id="in_risk" value="1.0" step="0.1">
-            </div>
-            <div style="flex:1">
-                <span class="label">Stop Loss (Pips)</span>
-                <input type="number" id="in_sl" value="20" step="1">
-            </div>
+        <div style="margin-top:20px; text-align:center;">
+            <div class="value mono" id="lbl_price" style="font-size:32px;">---</div>
         </div>
     </div>
 
-    <!-- RESULT -->
-    <div class="card" style="background: #263238;">
+    <div class="row" style="gap:15px; margin-bottom:16px;">
+        <div class="card" style="flex:1; margin:0; padding:15px;">
+            <span class="label">Risk %</span>
+            <input type="number" id="in_risk" value="1.0" step="0.1">
+        </div>
+        <div class="card" style="flex:1; margin:0; padding:15px;">
+            <span class="label">SL (Pips)</span>
+            <input type="number" id="in_sl" value="20" step="1">
+        </div>
+    </div>
+
+    <div class="card" style="border: 1px solid #333;">
         <div class="row">
             <span class="label">Volume</span>
-            <span class="label" id="out_msg">Input Params</span>
+            <span class="label" id="out_risk">Risk: $0.00</span>
         </div>
-        <div class="value" id="out_lots" style="font-size:24px; color:#4db6ac;">0.00 Lots</div>
+        <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
 
-        <button id="btn_trade" disabled style="margin-top:15px; padding:15px;">TRADE</button>
+        <button id="btn_trade" class="trade" disabled>Place Order</button>
     </div>
 
+    <div id="modal">
+        <div class="modal-content"></div>
+    </div>
+
+    <div id="log-toggle" onclick="document.getElementById('log').style.display='block'">Show Logs</div>
     <div id="log"></div>
 </body>
 
