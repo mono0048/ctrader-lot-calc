@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Tunnel Structure</title>
+    <title>ALC Tunnel Base64</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #011;
-            color: #0ff;
+            background: #000;
+            color: #ff0;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #0ff;
+            border: 2px solid #ff0;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,18 +24,18 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #044;
+            border-bottom: 1px solid #440;
             padding: 4px;
             word-break: break-all;
         }
 
         .try {
-            color: #8ff;
+            color: #aa0;
         }
 
         .hit {
-            color: #000;
-            background: #0f0;
+            color: #fff;
+            background: #c00;
             font-weight: bold;
             border: 2px solid #fff;
             padding: 5px;
@@ -59,99 +59,79 @@
             if (el) el.textContent = msg;
         };
 
-        // --- STRUCTURE FUZZER ---
-        window.fuzzStructure = (initMsgId) => {
+        // --- ENCODING FUZZER ---
+        window.fuzzEncoding = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            window.updateStatus("FUZZING STRUCTURE (Ping 52)...");
+            window.updateStatus("FUZZING BASE64 (Ping 52)...");
 
             // HEARTBEAT
             try { bridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: initMsgId, payload: null })); } catch (e) { }
 
-            // INNER MESSAGE: PING (No Auth Needed)
-            // Standard Open API: { payloadType: 52, clientMsgId: "...", payload: { timestamp: ... } }
-            const pingPayload = { timestamp: Date.now() };
-            const pingMsg = {
+            // INNER MESSAGE: PING
+            // We want to send this object, but encoded.
+            const pingObj = {
                 payloadType: 52,
                 clientMsgId: "ping-" + Date.now(),
-                payload: pingPayload
+                payload: { timestamp: Date.now() }
             };
+            const pingJson = JSON.stringify(pingObj);
+            const pingB64 = btoa(pingJson); // Base64 of JSON string
 
             // WRAPPER (2100)
-            // We need to put `pingMsg` into `2100`.
 
             const variants = [
-                // 1. NESTED STANDARD (Object)
+                // 1. Payload = Base64 String
                 {
-                    name: "Nest:Std",
+                    name: "Pay:B64",
                     json: {
                         payloadType: 2100,
-                        clientMsgId: "w1",
-                        payload: pingMsg
+                        clientMsgId: "enc1",
+                        payload: pingB64
                     }
                 },
-                // 2. NESTED STRING
+                // 2. Payload.data = Base64
                 {
-                    name: "Nest:Str",
+                    name: "Data:B64",
                     json: {
                         payloadType: 2100,
-                        clientMsgId: "w2",
-                        payload: JSON.stringify(pingMsg)
+                        clientMsgId: "enc2",
+                        payload: { data: pingB64 }
                     }
                 },
-                // 3. FLATTENED (Bridge style maybe?)
-                // Maybe 2100 just takes type "52"? No, 2100 is the type.
-
-                // 4. PROTO MESSAGE FIELD (Verified in some cTrader wrappers)
+                // 3. Payload.message = Base64
                 {
-                    name: "Proto:Obj",
+                    name: "Msg:B64",
                     json: {
                         payloadType: 2100,
-                        clientMsgId: "w4",
-                        payload: { protoMessage: pingMsg }
+                        clientMsgId: "enc3",
+                        payload: { message: pingB64 }
                     }
                 },
+                // 4. Payload.protoMessage = Base64
                 {
-                    name: "Proto:Str",
+                    name: "Proto:B64",
                     json: {
                         payloadType: 2100,
-                        clientMsgId: "w4s",
-                        payload: { protoMessage: JSON.stringify(pingMsg) }
-                    }
-                },
-
-                // 5. GENERIC "DATA" FIELD
-                {
-                    name: "Data:Msg",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "w5",
-                        payload: { data: pingMsg }
+                        clientMsgId: "enc4",
+                        payload: { protoMessage: pingB64 }
                     }
                 },
 
-                // 6. ALTERNATE FIELD NAMES for Inner ID
-                // Maybe it's not "payloadType" inside?
+                // 5. DOUBLE WRAP? (2100 wraps 2102 wraps 52?)
+                // Unlikely.
+
+                // 6. RAW BYTES?
+                // Cannot send raw bytes via JSON.
+                // But maybe array of numbers?
                 {
-                    name: "Alt:Type",
+                    name: "Data:Arr",
                     json: {
                         payloadType: 2100,
-                        clientMsgId: "w6",
+                        clientMsgId: "enc6",
                         payload: {
-                            type: 52,
-                            body: pingPayload
-                        }
-                    }
-                },
-                {
-                    name: "Alt:Id",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "w7",
-                        payload: {
-                            id: 52,
-                            message: pingPayload
+                            data: Array.from(pingJson).map(c => c.charCodeAt(0))
                         }
                     }
                 }
@@ -173,24 +153,15 @@
         window.processedHeartbeats = new Set();
         window.onHostMessage = (msg) => {
             if (!msg) return;
-
             if (msg.payloadType === 2000) {
                 if (window.processedHeartbeats.has(msg.clientMsgId)) return;
                 window.processedHeartbeats.add(msg.clientMsgId);
-
                 window.pushLog(`<< RECV 2000`);
-                window.fuzzStructure(msg.clientMsgId);
+                window.fuzzEncoding(msg.clientMsgId);
             }
-            else if (msg.payloadType === 2101) {
-                // ACK
-                window.updateStatus("!!! TUNNEL OPEN (ACK) !!!");
-                window.pushLog(`!!! ACK [2101] !!! ${JSON.stringify(msg)}`, "hit");
-            }
-            else if (msg.payloadType === 2102) {
-                // DATA from Server (Tunnel)
-                // If we sent Ping (52), we expect Pong (53) inside this 2102.
-                window.updateStatus("!!! PONG RECEIVED !!!");
-                window.pushLog(`!!! DATA [2102] !!! ${JSON.stringify(msg)}`, "hit");
+            else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType > 2000) {
+                window.updateStatus("!!! SUCCESS !!!");
+                window.pushLog(`!!! HIT [${msg.payloadType}] !!! ${JSON.stringify(msg)}`, "hit");
             }
             else if (msg.payloadType === 2500) {
                 const txt = msg.payload || "";
@@ -202,7 +173,7 @@
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v36: Payload Structure");
+            window.pushLog("Inspector v37: Base64 Encoding");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -213,7 +184,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v36: Ping (No Auth)
+        Inspector v37: Base64 Encoded Ping
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
