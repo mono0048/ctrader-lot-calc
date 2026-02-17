@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Source Inspector</title>
+    <title>ALC Protocol Mirror</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #aaa;
+            background: #002;
+            color: #0df;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #aaa;
+            border: 2px solid #0df;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,19 +24,19 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid #005;
             padding: 4px;
             word-break: break-all;
-            color: #ccc;
+            color: #adf;
         }
 
-        .code {
+        .succ {
             color: #0f0;
-            white-space: pre-wrap;
-            font-size: 10px;
-            border: 1px dashed #0f0;
-            padding: 5px;
-            margin: 5px 0;
+            background: #004;
+        }
+
+        .scan {
+            color: #fe0;
         }
     </style>
 
@@ -61,85 +61,89 @@
             if (el) el.textContent = msg;
         };
 
-        // --- SOURCE DUMP ---
-        window.dumpSource = () => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) {
-                window.pushLog("Bridge NOT Found");
-                return;
-            }
-
-            window.pushLog("Analyzing Bridge Functions...");
-
-            const props = Object.getOwnPropertyNames(bridge);
-            props.forEach(k => {
-                try {
-                    const val = bridge[k];
-                    if (typeof val === 'function') {
-                        window.pushLog(`FUNCTION: ${k}`);
-                        window.pushLog(`<div class="code">${val.toString()}</div>`);
-                    } else {
-                        window.pushLog(`PROP: ${k} = ${val}`);
-                    }
-                } catch (e) {
-                    window.pushLog(`Err reading ${k}: ${e.message}`);
-                }
-            });
-
-            // Also check Prototype
-            const proto = Object.getPrototypeOf(bridge);
-            if (proto && proto !== Object.prototype) {
-                window.pushLog("Analyzing Prototype...");
-                Object.getOwnPropertyNames(proto).forEach(k => {
-                    try {
-                        const val = bridge[k]; // Access via instance
-                        if (typeof val === 'function') {
-                            window.pushLog(`PROTO FN: ${k}`);
-                            window.pushLog(`<div class="code">${val.toString()}</div>`);
-                        }
-                    } catch (e) { }
-                });
-            }
-        };
-
-        // --- BINDING CHECK ---
-        // Sometimes native objects are not enumerable.
-        // Try to access known methods directly.
-        window.checkBindings = () => {
+        // --- MIRROR STRATEGY ---
+        window.mirrorResponse = (originalMsg) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            const methods = ['handlePluginEvent', 'handleErrorEvent', 'postMessage', 'sendMessage'];
-            methods.forEach(m => {
-                if (bridge[m]) {
-                    window.pushLog(`Direct Access [${m}]: ${typeof bridge[m]}`);
-                    try {
-                        window.pushLog(`<div class="code">${bridge[m].toString()}</div>`);
-                    } catch (e) { }
-                }
-            });
+            window.updateStatus("MIRRORING RESPONSE...");
+
+            // 1. EXACT CLONE MODIFY
+            // We reuse the exact object received, just changing the type.
+            // This preserves any hidden properties we might not see in JSON.stringify if they are enumerable.
+            const reply = JSON.parse(JSON.stringify(originalMsg));
+            reply.payloadType = 2001;
+            // Keep clientMsgId SAME as received (Echo)
+
+            const json = JSON.stringify(reply);
+
+            // A. Standard Send
+            try {
+                bridge.handlePluginEvent(json);
+                window.pushLog(">> SENT (Mirror): " + json);
+            } catch (e) { window.pushLog("Err Mirror: " + e.message); }
+
+            // B. Payload Wrapped
+            // Maybe payload needs to be a STRING inside the object?
+            try {
+                const wrap = {
+                    payloadType: 2001,
+                    clientMsgId: reply.clientMsgId,
+                    payload: JSON.stringify(reply.payload || {})
+                };
+                bridge.handlePluginEvent(JSON.stringify(wrap));
+                window.pushLog(">> SENT (WrappedPayload)");
+            } catch (e) { }
+
+            // 2. CORDOVA STYLE (Method + JSON)
+            try {
+                bridge.handlePluginEvent("initialised", json);
+                window.pushLog(">> SENT (Cmd+JSON): 'initialised'");
+            } catch (e) { }
+        };
+
+        // --- GLOBAL SCAN ---
+        window.scanDirect = () => {
+            const targets = ['cTrader', 'ctrader', 'Spotware', 'spotware', 'Algo', 'algo', 'Api', 'api'];
+            const found = [];
+
+            const scanObj = (root, path) => {
+                try {
+                    Object.getOwnPropertyNames(root).forEach(k => {
+                        targets.forEach(t => {
+                            if (k.includes(t)) found.push(path + "." + k);
+                        });
+                    });
+                } catch (e) { }
+            };
+
+            scanObj(window, "window");
+
+            if (found.length > 0) {
+                window.pushLog("FOUND GLOBALS: " + found.join(", "), "scan");
+            } else {
+                window.pushLog("No specific 'cTrader' globals found.", "scan");
+            }
         };
 
         // --- HANDLER ---
         window.onHostMessage = (msg) => {
             if (!msg) return;
+
             if (msg.payloadType === 2000) {
                 window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
-                window.updateStatus("2000 RECV. DUMPING SOURCE...");
-
-                // DUMP NOW
-                window.dumpSource();
-                window.checkBindings();
+                window.mirrorResponse(msg);
+            }
+            else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType === 2500) {
+                window.updateStatus("!!! SUCCESS !!!");
+                window.pushLog(`!!! HIT !!! RECV ${msg.payloadType}`, "succ");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v26: Source Dumper");
-
-            // Also dump immediately in case it's static
-            window.dumpSource();
-
+            window.pushLog("Inspector v27: Mirror & Scan");
+            window.scanDirect();
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -150,7 +154,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v26: Native vs Wrapper Identifier
+        Inspector v27: Protocol Mirroring
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
