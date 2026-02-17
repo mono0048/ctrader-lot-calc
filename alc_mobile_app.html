@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc</title>
+    <title>Auto Lot Calc v4.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -54,7 +54,6 @@
             flex-direction: column;
         }
 
-        /* INPUTS */
         input,
         select,
         button {
@@ -84,7 +83,6 @@
             padding-right: 40px;
         }
 
-        /* ACTION BTN */
         button.trade {
             background: linear-gradient(135deg, #2962ff, #448aff);
             border: none;
@@ -106,7 +104,6 @@
             box-shadow: none;
         }
 
-        /* MODAL */
         #modal {
             position: fixed;
             top: 0;
@@ -137,17 +134,20 @@
         }
 
         #log-toggle {
-            font-size: 10px;
-            color: #444;
+            font-size: 12px;
+            color: #666;
             text-align: center;
             margin-top: 30px;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 8px;
         }
 
         #log {
             display: none;
             font-family: "JetBrains Mono", monospace;
-            font-size: 9px;
-            color: #666;
+            font-size: 10px;
+            color: #888;
             white-space: pre-wrap;
             margin-top: 10px;
             border-top: 1px solid #333;
@@ -224,7 +224,6 @@
                 window.addEventListener('message-from-host', e => {
                     const m = e.data;
                     if (m.payloadType === 2000) {
-                        // Heartbeat
                         try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: m.clientMsgId, payload: null })); } catch (e) { }
                         if (!App.ready) { App.ready = true; Logic.start(); }
                     } else { Tunnel.onMsg(m); }
@@ -261,22 +260,19 @@
             },
 
             selectSym: (id) => {
-                // Unsub old?
                 Tunnel.send(163, { symbolId: [id] }, res => {
                     const l = P(res, "symbol");
                     if (l && l[0]) {
-                        App.symbol = l[0]; // cache details
-                        // Normalize Step (Handle Cents vs Units confusion)
-                        // If Step > 10000, assumes Cents (100k = 1 Lot). Convert to Units (1000).
-                        // If Step <= 10000, assume Units.
+                        App.symbol = l[0];
+                        // Normalize Step
                         let step = P(App.symbol, "stepVolume") || 1000;
-                        if (step > 10000) step = step / 100; // Fix for "Step=100000" log
+                        if (step > 10000) step = step / 100;
                         App.symbol._step = step;
 
                         UI.log(`Selected ${P(App.symbol, "name")} (Step: ${step})`);
 
-                        // Sub
-                        Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: false });
+                        // Sub (RESTORED logic: subscribeToSpotTimestamp: true)
+                        Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
                     }
                 });
@@ -284,13 +280,21 @@
 
             onQuote: (q) => {
                 const sid = P(q, "symbolId");
-                if (App.symbol && P(App.symbol, "id") === sid) {
+                // LOOSE check
+                if (App.symbol && P(App.symbol, "id") == sid) {
                     const bid = P(q, "bid");
-                    if (bid) {
-                        App.price.bid = bid / 100000;
+                    const ask = P(q, "ask");
+
+                    // Partial updates
+                    if (bid) App.price.bid = bid / 100000;
+                    if (ask) App.price.ask = ask / 100000;
+
+                    if (App.price.bid > 0) {
                         UI.updatePrice();
                         Logic.calc();
                     }
+                } else {
+                    // UI.log(`Ex ID: ${sid} != ${P(App.symbol,'id')}`);
                 }
             },
 
@@ -302,23 +306,22 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                // Pip Val (Approx for Demo)
+                // Pip Val
                 let pv = 10;
                 const name = P(App.symbol, "name");
                 if (name.indexOf("JPY") !== -1) pv = 1000 / App.price.bid;
 
                 let lots = riskAmt / (sl * pv);
 
-                // NORMALIZE
-                // 1 Lot = 100,000 Units.
+                // Normalize
                 let units = lots * 100000;
                 const step = App.symbol._step || 1000;
 
                 units = Math.floor(units / step) * step;
 
                 // Min check
-                const min = P(App.symbol, "minVolume") || 1000;
-                // if(units < min) units = 0; // Optional: Allow 0 to disable button
+                const min = (P(App.symbol, "minVolume") || 1000);
+                const minUnits = (min > 10000) ? (min / 100) : min; // Adjust if min is in cents
 
                 App.volUnits = units;
                 App.volLots = units / 100000;
@@ -336,7 +339,7 @@
                     symbolId: P(App.symbol, "id"),
                     orderType: 1, // Market
                     tradeSide: 1, // Buy
-                    volume: App.volUnits // Send UNITS (e.g. 76000)
+                    volume: App.volUnits
                 };
 
                 Tunnel.send(143, cmd, res => {
@@ -346,9 +349,9 @@
                     const err = P(res, "errorCode");
                     if (err) UI.showModal("ERROR", err);
                     else {
-                        // Verify PayloadType?
                         UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
                     }
+                    UI.log("OrdRes: " + JSON.stringify(res));
                 });
             }
         };
@@ -357,7 +360,7 @@
         const UI = {
             log: (t) => {
                 const l = document.getElementById('log');
-                l.textContent = `> ${t}\n` + l.textContent.substring(0, 200);
+                l.textContent = `> ${t}\n` + l.textContent.substring(0, 300);
             },
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.accountId;
@@ -375,7 +378,10 @@
                 s.onchange = () => Logic.selectSym(parseInt(s.value));
             },
             updatePrice: () => {
-                document.getElementById('lbl_price').textContent = App.price.bid.toFixed(3);
+                // Animate color?
+                const el = document.getElementById('lbl_price');
+                el.textContent = App.price.bid.toFixed(3);
+                el.style.color = "#fff";
             },
             updateCalc: (risk) => {
                 document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
