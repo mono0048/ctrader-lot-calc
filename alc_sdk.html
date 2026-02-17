@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC WebView Scan</title>
+    <title>ALC Bridge Surgeon</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #0f0;
+            background: #222;
+            color: #ffeb3b;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 1px solid #0f0;
+            border: 2px solid #ffeb3b;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -23,25 +23,33 @@
         }
 
         .log {
-            font-size: 10px;
-            border-bottom: 1px solid #330033;
-            padding: 2px;
+            font-size: 11px;
+            border-bottom: 1px solid #444;
+            padding: 4px;
             word-break: break-all;
-            color: #ccc;
+            color: #fff;
+        }
+
+        .err {
+            color: #ff5555;
+        }
+
+        .succ {
+            color: #55ff55;
         }
     </style>
 
     <script>
         // --- UTILS ---
         window.logBuffer = [];
-        window.pushLog = (msg) => {
+        window.pushLog = (msg, type) => {
             const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
-            window.logBuffer.unshift(line);
+            window.logBuffer.unshift({ t: line, c: type });
             console.log(line);
             const el = document.getElementById('logs');
             if (el) {
                 const div = document.createElement('div');
-                div.className = "log";
+                div.className = "log " + (type || "");
                 div.textContent = line;
                 el.insertBefore(div, el.firstChild);
             }
@@ -52,71 +60,76 @@
             if (el) el.textContent = msg;
         };
 
-        // --- INSPECTION ---
-        window.inspectWebview = () => {
-            window.pushLog("--- INSPECTING window.android.webview ---");
+        // --- SURGEON ---
+        window.operateOnBridge = () => {
+            const bridge = window.EventBasedPluginJavaScriptBridge;
 
-            if (!window.android || !window.android.webview) {
-                window.pushLog("CRITICAL: window.android.webview NOT FOUND");
+            if (!bridge) {
+                window.pushLog("CRITICAL: EventBasedPluginJavaScriptBridge NOT FOUND", "err");
+                // Fallback scan
+                for (let k in window) {
+                    if (k.toLowerCase().includes("bridge") || k.toLowerCase().includes("plugin")) {
+                        window.pushLog(`Found alternative global: ${k}`, "succ");
+                    }
+                }
                 return;
             }
 
-            const wv = window.android.webview;
+            window.pushLog("BRIDGE FOUND. Starting analysis...", "succ");
 
-            // 1. Direct Keys
+            // 1. Prototype Chain & Descriptors
             try {
-                const keys = [];
-                for (let k in wv) keys.push(k);
-                window.pushLog(`KEYS: ${keys.join(', ') || 'NONE'}`);
-            } catch (e) { window.pushLog("Keys Err: " + e.message); }
+                const props = Object.getOwnPropertyNames(bridge);
+                window.pushLog(`OWN PROPS: ${props.join(', ') || 'none'}`);
 
-            // 2. Proto Keys
-            try {
-                const proto = Object.getPrototypeOf(wv);
+                const proto = Object.getPrototypeOf(bridge);
                 if (proto) {
-                    const pKeys = Object.getOwnPropertyNames(proto);
-                    window.pushLog(`PROTO KEYS: ${pKeys.join(', ') || 'NONE'}`);
-
-                    // Check types
-                    pKeys.forEach(k => {
-                        try {
-                            window.pushLog(`  > ${k}: ${typeof wv[k]}`);
-                        } catch (e) { }
-                    });
+                    const pProps = Object.getOwnPropertyNames(proto);
+                    window.pushLog(`PROTO PROPS: ${pProps.join(', ') || 'none'}`);
                 }
-            } catch (e) { window.pushLog("Proto Err: " + e.message); }
+            } catch (e) { window.pushLog("Analysis Err: " + e.message, "err"); }
 
-            window.pushLog("---------------------------------------");
+            // 2. Type Check
+            try {
+                if (bridge.handlePluginEvent) {
+                    window.pushLog(`handlePluginEvent is: ${typeof bridge.handlePluginEvent}`);
+                    window.pushLog(`handlePluginEvent.length: ${bridge.handlePluginEvent.length}`); // Arg count
+                }
+            } catch (e) { }
         };
 
-        // --- SPRAYER (Webview Edition) ---
-        window.sprayWebview = (msgId) => {
-            window.updateStatus("SPRAYING window.android.webview...");
-            const wv = window.android?.webview;
-            if (!wv) return;
+        // --- INJECTION ---
+        window.injectResponse = (msgId) => {
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            if (!bridge || !bridge.handlePluginEvent) return;
 
-            const payload = {
+            window.updateStatus("INJECTING RESPONSES...");
+
+            const payloadObj = {
                 payloadType: 2001,
                 clientMsgId: msgId,
                 payload: {}
             };
-            const strPayload = JSON.stringify(payload);
+            const payloadStr = JSON.stringify(payloadObj);
 
-            // Potential method names
-            const candidates = ['postMessage', 'sendMessage', 'send', 'onMessage', 'dispatch'];
+            // ATTEMPT 1: String
+            try {
+                const ret = bridge.handlePluginEvent(payloadStr);
+                window.pushLog(`Sent(String) -> Returned: ${ret}`, "succ");
+            } catch (e) { window.pushLog(`Sent(String) failed: ${e.message}`, "err"); }
 
-            candidates.forEach(m => {
-                if (typeof wv[m] === 'function') {
-                    try {
-                        wv[m](strPayload);
-                        window.pushLog(`>> SENT wv.${m}(Str)`);
-                    } catch (e) { }
-                    try {
-                        wv[m](payload);
-                        window.pushLog(`>> SENT wv.${m}(Obj)`);
-                    } catch (e) { }
-                }
-            });
+            // ATTEMPT 2: Object
+            try {
+                const ret = bridge.handlePluginEvent(payloadObj);
+                window.pushLog(`Sent(Object) -> Returned: ${ret}`, "succ");
+            } catch (e) { window.pushLog(`Sent(Object) failed: ${e.message}`, "err"); }
+
+            // ATTEMPT 3: Wrapper
+            try {
+                const wrapper = { type: 'message-to-host', payload: payloadObj };
+                const ret = bridge.handlePluginEvent(JSON.stringify(wrapper));
+                window.pushLog(`Sent(Wrapper) -> Returned: ${ret}`, "succ");
+            } catch (e) { }
         };
 
         // --- HANDLER ---
@@ -124,20 +137,23 @@
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
-                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
-                window.inspectWebview();
-                window.sprayWebview(msg.clientMsgId);
+                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`, "succ");
+                window.operateOnBridge(); // Analyze right at the moment of truth
+
+                setTimeout(() => {
+                    window.injectResponse(msg.clientMsgId);
+                }, 100);
             }
             else if (msg.payloadType === 2101 || msg.payloadType === 2500) {
-                window.updateStatus("CONNECTED! RECV DATA!");
-                window.pushLog(`!!! SUCCESS !!! data: ${JSON.stringify(msg)}`);
+                window.updateStatus("CONNECTED! DATA RECEIVED!");
+                window.pushLog(`!!! DATA !!!: ${JSON.stringify(msg)}`, "succ");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v18 Ready.");
-            window.inspectWebview(); // Run once at start too
+            window.pushLog("Inspector v19: Bridge Surgeon");
+            window.operateOnBridge();
 
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
             window.addEventListener('message', (e) => {
@@ -149,10 +165,10 @@
 </head>
 
 <body>
-    <div id="status" class="status">WAITING FOR 2000...</div>
+    <div id="status" class="status">WAITING FOR HANDSHAKE...</div>
 
-    <p style="font-size:12px; text-align:center; color:#555;">
-        Inspector v18: Sub-Bridge Scan
+    <p style="font-size:12px; text-align:center; color:#aaa;">
+        Inspector v19: EventBasedPluginJavaScriptBridge Analysis
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
@@ -164,8 +180,8 @@
                 if (el && el.innerHTML === "") {
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
-                        d.className = "log";
-                        d.textContent = l;
+                        d.className = "log " + (l.c || "");
+                        d.textContent = l.t;
                         el.appendChild(d);
                     });
                 }
