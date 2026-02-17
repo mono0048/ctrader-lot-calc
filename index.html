@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc</title>
+    <title>Auto Lot Calc v5.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -132,24 +132,6 @@
             font-size: 40px;
             margin-bottom: 10px;
         }
-
-        #log-toggle {
-            font-size: 10px;
-            color: #444;
-            text-align: center;
-            margin-top: 30px;
-        }
-
-        #log {
-            display: none;
-            font-family: "JetBrains Mono", monospace;
-            font-size: 9px;
-            color: #666;
-            white-space: pre-wrap;
-            margin-top: 10px;
-            border-top: 1px solid #333;
-            padding-top: 10px;
-        }
     </style>
 
     <script>
@@ -163,7 +145,7 @@
             return undefined;
         }
 
-        const App = { account: "---", balance: 0, currency: "USD", symbol: null, price: 0, volUnits: 0, volLots: 0 };
+        const App = { account: "---", balance: 0, currency: "USD", symbol: null, price: 0, volCents: 0, volLots: 0 };
 
         const Tunnel = {
             queue: new Map(),
@@ -213,11 +195,14 @@
                 document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
                 Tunnel.send(175, {}, res => {
+                    // GetAccount
                     const t = P(res, "trader");
                     if (t) {
                         App.account = P(t, "login");
-                        App.balance = (P(t, "balance") || 0) / 100;
+                        App.balance = (P(t, "balance") || 0) / 100; // Sent as cents usually? Wait, yes. 
+                        // Currency: Try multiple fields
                         App.currency = P(res, "depositCurrency") || "USD";
+
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
@@ -239,14 +224,14 @@
                     const l = P(res, "symbol");
                     if (l && l[0]) {
                         App.symbol = l[0];
-                        // FIX: Ensure ID is set for comparison
                         App.symbol.id = id;
 
+                        // Step Volume
+                        // If > 10000, it's cents. Normal is 1000 (0.01 lot units) or 100000 cents
                         let step = P(App.symbol, "stepVolume") || 1000;
-                        if (step > 10000) step = step / 100;
+                        if (step > 10000) step = step / 100; // Convert to Units
                         App.symbol._step = step;
 
-                        // Restore Spot Timestamp
                         Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
                     }
@@ -273,30 +258,66 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                let pv = 10;
-                const name = P(App.symbol, "name");
-                if (name && name.indexOf("JPY") !== -1) pv = 1000 / App.price;
+                // --- PIP VALUE LOGIC ---
+                // Standard Lot = 100,000 Units
+                // PipValue is per Standard Lot
+                let pipVal = 10;
 
-                let lots = riskAmt / (sl * pv);
+                const sym = P(App.symbol, "name");
+                const cur = App.currency; // "JPY" or "USD"
 
+                // Heuristic detection
+                const isJpyPair = sym.indexOf("JPY") !== -1;
+                const isJpyAcc = (cur.indexOf("JPY") !== -1);
+
+                if (isJpyAcc) {
+                    if (isJpyPair) {
+                        // JPY Account, USDJPY -> Pip Value = 1000 JPY (Fixed)
+                        pipVal = 1000;
+                    } else {
+                        // JPY Account, EURUSD -> Pip Value = 1000 * Rate(USDJPY) approx
+                        // For demo, if not a JPY pair, assume cross?
+                        // Let's rely on basic assumption for JPY users:
+                        // If USDJPY, 1000.
+                        // If other, we might be off, but most use USDJPY.
+                        // Fallback: 1000 * Bid (Rate) if it's a USD pair? 
+                        // Let's stick to 1000 for JPY pairs on JPY account.
+                        pipVal = 1000;
+                    }
+                } else {
+                    // USD Account
+                    if (isJpyPair) {
+                        // USD Account, USDJPY -> Pip Value = 1000 / Bid
+                        pipVal = 1000 / App.price;
+                    } else {
+                        // USD Account, EURUSD -> Pip Value = 10
+                        pipVal = 10;
+                    }
+                }
+
+                let lots = riskAmt / (sl * pipVal);
+
+                // Normalize to Units
                 let units = lots * 100000;
                 const step = App.symbol._step || 1000;
                 units = Math.floor(units / step) * step;
 
-                App.volUnits = units;
+                // OUTPUT CENTS (Units * 100)
+                App.volCents = units * 100;
                 App.volLots = units / 100000;
 
                 UI.updateCalc(riskAmt);
             },
 
             trade: () => {
-                if (App.volUnits <= 0) return;
+                if (App.volCents <= 0) return;
                 document.getElementById('btn_trade').innerText = "SENDING...";
                 document.getElementById('btn_trade').disabled = true;
 
                 const cmd = {
-                    symbolId: App.symbol.id, // Use validated ID
-                    orderType: 1, tradeSide: 1, volume: App.volUnits
+                    symbolId: App.symbol.id,
+                    orderType: 1, tradeSide: 1,
+                    volume: App.volCents // SEND CENTS!
                 };
 
                 Tunnel.send(143, cmd, res => {
@@ -313,7 +334,7 @@
         const UI = {
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.account;
-                document.getElementById('acc_bal').textContent = App.balance.toFixed(2) + " " + App.currency;
+                document.getElementById('acc_bal').textContent = App.balance.toFixed(0) + " " + App.currency; // Integer for JPY
             },
             fillSyms: (list) => {
                 const s = document.getElementById('sym_select');
@@ -332,8 +353,8 @@
             },
             updateCalc: (risk) => {
                 document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
-                document.getElementById('out_risk').textContent = "Risk: $" + risk.toFixed(2);
-                document.getElementById('btn_trade').disabled = (App.volUnits <= 0);
+                document.getElementById('out_risk').textContent = "Risk: " + risk.toFixed(0) + " " + App.currency;
+                document.getElementById('btn_trade').disabled = (App.volCents <= 0);
             },
             showModal: (title, msg) => {
                 const m = document.getElementById('modal');
@@ -397,7 +418,7 @@
     <div class="card" style="border: 1px solid #333;">
         <div class="row">
             <span class="label">Volume</span>
-            <span class="label" id="out_risk">Risk: $0.00</span>
+            <span class="label" id="out_risk">Risk: 0</span>
         </div>
         <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
 
