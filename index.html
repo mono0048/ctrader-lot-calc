@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Protocol Diagnostics</title>
+    <title>ALC Full Handshake</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #0ff;
+            background: #001;
+            color: #fff;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #0ff;
+            border: 2px solid #fff;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,15 +24,17 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #004444;
+            border-bottom: 1px solid #333;
             padding: 4px;
             word-break: break-all;
-            color: #eee;
         }
 
-        .hl {
-            color: #ffff00;
-            font-weight: bold;
+        .send {
+            color: #88ff88;
+        }
+
+        .recv {
+            color: #8888ff;
         }
     </style>
 
@@ -47,7 +49,7 @@
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.innerHTML = line; // Allow HTML for highlight
+                div.textContent = line;
                 el.insertBefore(div, el.firstChild);
             }
         };
@@ -57,80 +59,73 @@
             if (el) el.textContent = msg;
         };
 
-        // --- GLOBAL TRAP ---
-        // Define potential callbacks the host might try to call
-        window.onPluginEvent = (data) => window.pushLog("TRAP: window.onPluginEvent called!", "hl");
-        window.handlePluginEvent = (data) => window.pushLog("TRAP: window.handlePluginEvent called!", "hl");
-        window.receiveMessage = (data) => window.pushLog("TRAP: window.receiveMessage called!", "hl");
-        window.callback = (data) => window.pushLog("TRAP: window.callback called!", "hl");
-
-        // --- INJECTOR ---
-        window.tryInject = (msgId) => {
+        // --- PROTOCOL ---
+        window.startConversing = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            window.updateStatus("SENDING 2001 (Mix Mode)...");
+            window.updateStatus("SENDING HANDSHAKE (2001)...");
 
-            const payload = {
+            // STEP 1: Send 2001 (Confirm)
+            // Echo the ID from the 2000 message
+            const msg2001 = {
                 payloadType: 2001,
-                clientMsgId: msgId,
-                payload: {}
+                clientMsgId: initMsgId,
+                payload: null
             };
 
-            // 1. Normal Object
-            try { bridge.handlePluginEvent(payload); } catch (e) { }
-
-            // 2. Normal JSON
-            try { bridge.handlePluginEvent(JSON.stringify(payload)); } catch (e) { }
-
-            // 3. Double JSON (Sometimes required for nested parsing)
             try {
-                bridge.handlePluginEvent(JSON.stringify(JSON.stringify(payload)));
-                window.pushLog("Sent Double-JSON", "hl");
-            } catch (e) { }
+                bridge.handlePluginEvent(JSON.stringify(msg2001));
+                window.pushLog(">> SENT 2001 (String)", "send");
+            } catch (e) { window.pushLog("Err 2001: " + e.message); }
+
+            // STEP 2: Send 2100 (Auth/Traffic)
+            // Send immediately after. Do not wait.
+            setTimeout(() => {
+                window.updateStatus("SENDING REQUEST (2100)...");
+                const reqId = "req-" + Date.now();
+
+                // Dummy Payload to provoke response
+                const msg2100 = {
+                    payloadType: 2100,
+                    clientMsgId: reqId,
+                    payload: {
+                        payloadType: 9999, // Unknown payload to force error response
+                        clientMsgId: reqId
+                    }
+                };
+
+                try {
+                    bridge.handlePluginEvent(JSON.stringify(msg2100));
+                    window.pushLog(">> SENT 2100 (String)", "send");
+                } catch (e) { window.pushLog("Err 2100: " + e.message); }
+
+            }, 500); // Small delay
         };
 
         // --- HANDLER ---
-        window.handleIncoming = (source, data) => {
-            if (!data) return;
+        window.onHostMessage = (msg) => {
+            if (!msg) return;
 
-            // If string, try parse
-            let msg = data;
-            if (typeof data === 'string') {
-                try { msg = JSON.parse(data); } catch (e) { }
-            }
+            const type = msg.payloadType;
 
-            if (msg.payloadType === 2000) {
-                window.pushLog(`<< RECV 2000 from ${source}`, "hl");
-                // FULL DUMP of 2000
-                window.pushLog(`2000 CONTENT: ${JSON.stringify(msg)}`);
-
-                // Auto-respond
-                setTimeout(() => window.tryInject(msg.clientMsgId), 100);
+            if (type === 2000) {
+                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`, "recv");
+                // START!
+                window.startConversing(msg.clientMsgId);
             }
-            else if (msg.payloadType === 2101 || msg.payloadType === 2500 || msg.payloadType === 2102) {
-                window.updateStatus("CONNECTED! DATA RECV!");
-                window.pushLog(`SUCCESS: ${JSON.stringify(msg)}`, "hl");
-            }
-            else {
-                // Log unknown only if object
-                if (typeof msg === 'object') {
-                    // window.pushLog(`Unknown: ${JSON.stringify(msg)}`);
-                }
+            else if (type === 2101 || type === 2102 || type === 2500) {
+                window.updateStatus("CONNECTED! RESPONSE RECEIVED!");
+                window.pushLog(`SUCCESS!! << RECV ${type}: ${JSON.stringify(msg)}`, "recv");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v20: Full Diagnostics");
+            window.pushLog("Inspector v21: Full Conversation");
 
-            // Listen on WINDOW
-            window.addEventListener('message-from-host', (e) => window.handleIncoming('win:msg-host', e.data));
-            window.addEventListener('message', (e) => window.handleIncoming('win:message', e.data));
-
-            // Listen on DOCUMENT (Just in case)
-            document.addEventListener('message-from-host', (e) => window.handleIncoming('doc:msg-host', e.detail || e.data));
-            document.addEventListener('plugin-message', (e) => window.handleIncoming('doc:plugin-msg', e.detail || e.data));
+            // Listen standard
+            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
     </script>
@@ -139,8 +134,8 @@
 <body>
     <div id="status" class="status">WAITING 2000...</div>
 
-    <p style="font-size:12px; text-align:center; color:#555;">
-        Inspector v20: Dump & Trap
+    <p style="font-size:12px; text-align:center; color:#aaa;">
+        Inspector v21: 2001 -> 2100 Sequence
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
@@ -153,7 +148,7 @@
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
                         d.className = "log " + (l.c || "");
-                        d.innerHTML = l.t;
+                        d.textContent = l.t;
                         el.appendChild(d);
                     });
                 }
