@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>ALC Android Deep Scan</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <style>
+        body {
+            background: #111;
+            color: #ddd;
+            font-family: monospace;
+            padding: 10px;
+        }
+
+        .status {
+            padding: 10px;
+            border: 1px solid #444;
+            margin-bottom: 10px;
+            font-weight: bold;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .log {
+            font-size: 10px;
+            border-bottom: 1px solid #333;
+            padding: 2px;
+            word-break: break-all;
+        }
+
+        h2 {
+            font-size: 14px;
+            margin: 5px 0;
+            color: #aaf;
+        }
+    </style>
+
+    <script>
+        // --- UTILS ---
+        window.logBuffer = [];
+        window.pushLog = (msg) => {
+            const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
+            window.logBuffer.unshift(line);
+            console.log(line);
+            const el = document.getElementById('logs');
+            if (el) {
+                const div = document.createElement('div');
+                div.className = "log";
+                div.textContent = line;
+                el.insertBefore(div, el.firstChild);
+            }
+        };
+
+        window.updateStatus = (msg, color) => {
+            const el = document.getElementById('status');
+            if (el) {
+                el.textContent = msg;
+                if (color) el.style.color = color;
+                if (color) el.style.borderColor = color;
+            }
+        };
+
+        // --- INSPECTOR ---
+        window.inspectAndroid = () => {
+            const android = window.android;
+            if (!android) {
+                window.pushLog("CRITICAL: window.android NOT FOUND");
+                return;
+            }
+
+            window.pushLog("--- INSPECTING window.android ---");
+
+            // 1. Direct Keys
+            try {
+                const keys = [];
+                for (let k in android) keys.push(k);
+                window.pushLog(`KEYS: ${keys.join(', ') || 'NONE'}`);
+            } catch (e) { window.pushLog("Keys Err: " + e.message); }
+
+            // 2. Prototype properties (often hidden)
+            try {
+                const proto = Object.getPrototypeOf(android);
+                if (proto) {
+                    const pKeys = Object.getOwnPropertyNames(proto);
+                    window.pushLog(`PROTO KEYS: ${pKeys.join(', ') || 'NONE'}`);
+
+                    // Check descriptors
+                    pKeys.forEach(k => {
+                        try {
+                            const val = android[k];
+                            window.pushLog(`  > ${k}: ${typeof val}`);
+                        } catch (e) { }
+                    });
+                } else {
+                    window.pushLog("PROTO: null");
+                }
+            } catch (e) { window.pushLog("Proto Err: " + e.message); }
+
+            window.pushLog("--------------------------------");
+        };
+
+        // --- HANDLER ---
+        window.onHostMessage = (msg) => {
+            if (!msg) return;
+            const type = msg.payloadType;
+
+            // FILTER ECHOES
+            if (type === 2001 || type === 2100) {
+                // window.pushLog(`(Ignoring Echo: ${type})`);
+                return;
+            }
+
+            // 2000
+            if (type === 2000) {
+                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
+                window.updateStatus("HANDSHAKE RECV. CHECK LOGS.", "yellow");
+
+                // Try sending 2001 via detected methods? 
+                // Better to just wait for user to see logs first.
+                // But let's try 'postMessage' if it exists on android object
+                if (window.android && typeof window.android.postMessage === 'function') {
+                    window.pushLog("Trying android.postMessage...");
+                    try {
+                        const reply = JSON.stringify({
+                            payloadType: 2001,
+                            clientMsgId: msg.clientMsgId,
+                            payload: {}
+                        });
+                        window.android.postMessage(reply);
+                        window.pushLog(">> SENT android.postMessage");
+                    } catch (e) { window.pushLog("Err: " + e.message); }
+                }
+            }
+            else if (type === 2101 || type === 2102 || type === 2500) {
+                window.updateStatus("SUCCESS! REAL DATA", "#0f0");
+                window.pushLog(`<< DATA ${type}: ` + JSON.stringify(msg));
+            }
+        };
+
+        // --- SETUP ---
+        window.onload = () => {
+            window.inspectAndroid();
+            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
+            window.addEventListener('message', (e) => {
+                if (e.data && e.data.payloadType) window.onHostMessage(e.data);
+            });
+        };
+
+    </script>
+</head>
+
+<body>
+    <div id="status" class="status">INSPECTING...</div>
+
+    <p style="font-size:12px; text-align:center; color:#aaa;">
+        Inspector v17: Android & Noise Filter
+    </p>
+
+    <button onclick="window.inspectAndroid()" style="background:#444; color:white;">RE-SCAN ANDROID</button>
+    <button onclick="location.reload()" style="background:#555; color:white;">RELOAD</button>
+
+    <div id="logs" style="margin-top:10px;"></div>
+
+    <script>
+        setTimeout(() => {
+            if (window.logBuffer.length > 0) {
+                const el = document.getElementById('logs');
+                if (el && el.innerHTML === "") { // Only if empty
+                    window.logBuffer.forEach(l => {
+                        const d = document.createElement('div');
+                        d.className = "log";
+                        d.textContent = l;
+                        el.appendChild(d);
+                    });
+                }
+            }
+        }, 500);
+    </script>
+</body>
+
+</html>
