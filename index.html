@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Argument Fuzzer</title>
+    <title>ALC Source Inspector</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #101;
-            color: #f0a;
+            background: #000;
+            color: #aaa;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #f0a;
+            border: 2px solid #aaa;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,15 +24,19 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #404;
+            border-bottom: 1px solid #333;
             padding: 4px;
             word-break: break-all;
-            color: #fab;
+            color: #ccc;
         }
 
-        .succ {
+        .code {
             color: #0f0;
-            background: #002;
+            white-space: pre-wrap;
+            font-size: 10px;
+            border: 1px dashed #0f0;
+            padding: 5px;
+            margin: 5px 0;
         }
     </style>
 
@@ -47,7 +51,7 @@
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.textContent = line;
+                div.innerHTML = line;
                 el.insertBefore(div, el.firstChild);
             }
         };
@@ -57,79 +61,85 @@
             if (el) el.textContent = msg;
         };
 
-        // --- ARITY FUZZER ---
-        window.fuzzArguments = (msgId) => {
+        // --- SOURCE DUMP ---
+        window.dumpSource = () => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge || !bridge.handlePluginEvent) return;
+            if (!bridge) {
+                window.pushLog("Bridge NOT Found");
+                return;
+            }
 
-            window.updateStatus("FUZZING ARGUMENTS...");
+            window.pushLog("Analyzing Bridge Functions...");
 
-            const payloadObj = {
-                payloadType: 2001,
-                clientMsgId: msgId,
-                payload: {}
-            };
-            const json = JSON.stringify(payloadObj);
+            const props = Object.getOwnPropertyNames(bridge);
+            props.forEach(k => {
+                try {
+                    const val = bridge[k];
+                    if (typeof val === 'function') {
+                        window.pushLog(`FUNCTION: ${k}`);
+                        window.pushLog(`<div class="code">${val.toString()}</div>`);
+                    } else {
+                        window.pushLog(`PROP: ${k} = ${val}`);
+                    }
+                } catch (e) {
+                    window.pushLog(`Err reading ${k}: ${e.message}`);
+                }
+            });
 
-            // 1. STANDARD (1 arg) - We know this "works" (no error) but maybe ignored
-            // Included for baseline
-            try { bridge.handlePluginEvent(json); window.pushLog("Sent(1): json"); } catch (e) { }
-
-            // 2. SPLIT ARGS (2 args)
-            // handlePluginEvent(type, json)
-            try {
-                bridge.handlePluginEvent(2001, json);
-                window.pushLog("Sent(2): 2001, json");
-            } catch (e) { window.pushLog("Err(2A): " + e.message); }
-
-            try {
-                bridge.handlePluginEvent("2001", json);
-                window.pushLog("Sent(2): '2001', json");
-            } catch (e) { window.pushLog("Err(2B): " + e.message); }
-
-            // 3. SPLIT ARGS (3 args)
-            // handlePluginEvent(type, id, json)
-            try {
-                bridge.handlePluginEvent(2001, msgId, json);
-                window.pushLog("Sent(3): 2001, id, json");
-            } catch (e) { window.pushLog("Err(3): " + e.message); }
-
-            // 4. OLD WEBVIEW STYLE (prompt)
-            // Sometimes bridges use prompt() intercept
-            try {
-                const res = prompt(json, "gap-iab:");
-                if (res) window.pushLog("PROMPT Return: " + res, "succ");
-            } catch (e) { }
+            // Also check Prototype
+            const proto = Object.getPrototypeOf(bridge);
+            if (proto && proto !== Object.prototype) {
+                window.pushLog("Analyzing Prototype...");
+                Object.getOwnPropertyNames(proto).forEach(k => {
+                    try {
+                        const val = bridge[k]; // Access via instance
+                        if (typeof val === 'function') {
+                            window.pushLog(`PROTO FN: ${k}`);
+                            window.pushLog(`<div class="code">${val.toString()}</div>`);
+                        }
+                    } catch (e) { }
+                });
+            }
         };
 
-        // --- ID STRATEGY ---
-        window.processedIds = new Set();
+        // --- BINDING CHECK ---
+        // Sometimes native objects are not enumerable.
+        // Try to access known methods directly.
+        window.checkBindings = () => {
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            if (!bridge) return;
+
+            const methods = ['handlePluginEvent', 'handleErrorEvent', 'postMessage', 'sendMessage'];
+            methods.forEach(m => {
+                if (bridge[m]) {
+                    window.pushLog(`Direct Access [${m}]: ${typeof bridge[m]}`);
+                    try {
+                        window.pushLog(`<div class="code">${bridge[m].toString()}</div>`);
+                    } catch (e) { }
+                }
+            });
+        };
 
         // --- HANDLER ---
         window.onHostMessage = (msg) => {
             if (!msg) return;
-
             if (msg.payloadType === 2000) {
-                // ONLY PROCESS NEW IDs to avoid infinite loops if we fail
-                if (window.processedIds.has(msg.clientMsgId)) {
-                    return;
-                }
-                window.processedIds.add(msg.clientMsgId);
-
                 window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
+                window.updateStatus("2000 RECV. DUMPING SOURCE...");
 
-                // Fuzz args
-                window.fuzzArguments(msg.clientMsgId);
-            }
-            else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType === 2500) {
-                window.updateStatus("!!! SUCCESS !!!");
-                window.pushLog(`!!! HIT !!! RECV ${msg.payloadType}`, "succ");
+                // DUMP NOW
+                window.dumpSource();
+                window.checkBindings();
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v25: Argument Fuzzer");
+            window.pushLog("Inspector v26: Source Dumper");
+
+            // Also dump immediately in case it's static
+            window.dumpSource();
+
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -140,7 +150,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v25: Multi-Arg & Prompt Test
+        Inspector v26: Native vs Wrapper Identifier
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
@@ -153,7 +163,7 @@
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
                         d.className = "log " + (l.c || "");
-                        d.textContent = l.t;
+                        d.innerHTML = l.t;
                         el.appendChild(d);
                     });
                 }
