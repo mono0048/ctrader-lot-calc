@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Type Scanner</title>
+    <title>ALC Protocol Mapper</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -23,9 +23,9 @@
         }
 
         .log {
-            font-size: 11px;
+            font-size: 10px;
             border-bottom: 1px solid #333;
-            padding: 4px;
+            padding: 2px;
             word-break: break-all;
             white-space: nowrap;
             overflow: hidden;
@@ -37,8 +37,8 @@
             font-weight: bold;
         }
 
-        .scan {
-            color: #555;
+        .map {
+            color: #fb0;
         }
     </style>
 
@@ -47,14 +47,18 @@
         window.logBuffer = [];
         window.pushLog = (msg, type) => {
             const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
-            window.logBuffer.unshift({ t: line, c: type });
-            console.log(line);
+            // window.logBuffer.unshift({t:line, c:type}); // No buffer for high volume
+
+            // append directly for performance
             const el = document.getElementById('logs');
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
                 div.textContent = line;
                 el.insertBefore(div, el.firstChild);
+
+                // Limit DOM
+                if (el.children.length > 500) el.removeChild(el.lastChild);
             }
         };
 
@@ -63,91 +67,87 @@
             if (el) el.textContent = msg;
         };
 
-        // --- SCANNER ---
-        window.scanTypes = (initMsgId) => {
+        // --- MAPPER ---
+        window.scanRange = (start, end) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            window.updateStatus("SCANNING TYPES (2000-2200)...");
+            // Batch send
+            for (let i = start; i <= end; i++) {
+                try {
+                    bridge.handlePluginEvent(JSON.stringify({
+                        payloadType: i,
+                        clientMsgId: "map-" + i,
+                        payload: {}
+                    }));
+                } catch (e) { }
+            }
+        };
 
-            // Ranges to scan
-            const ranges = [
-                { start: 0, end: 50 },
-                { start: 1000, end: 1010 },
-                { start: 2000, end: 2200 }
-            ];
+        window.startMapping = () => {
+            window.updateStatus("MAPPING PROTOCOL (0-3000)...");
 
-            let queue = [];
-            ranges.forEach(r => {
-                for (let i = r.start; i <= r.end; i++) {
-                    queue.push(i);
-                }
-            });
+            let cursor = 0;
+            const batch = 100;
+            const max = 3000;
 
-            const batchSize = 10;
-            let index = 0;
-
-            const processBatch = () => {
-                if (index >= queue.length) {
-                    window.pushLog("SCAN COMPLETE", "hit");
+            const next = () => {
+                if (cursor > max) {
+                    window.pushLog("MAPPING COMPLETE", "hit");
                     return;
                 }
-
-                for (let k = 0; k < batchSize && index < queue.length; k++) {
-                    const type = queue[index++];
-                    try {
-                        const msg = {
-                            payloadType: type,
-                            clientMsgId: "scan-" + type,
-                            payload: {} // Empty payload
-                        };
-                        bridge.handlePluginEvent(JSON.stringify(msg));
-                        // window.pushLog(`Sent ${type}`, "scan"); // Too spammy
-                    } catch (e) { }
-                }
-
-                setTimeout(processBatch, 20); // Fast cycle
+                window.scanRange(cursor, cursor + batch - 1);
+                cursor += batch;
+                setTimeout(next, 250); // Throttle
             };
 
-            processBatch();
+            next();
         };
 
         // --- HANDLER ---
-        window.scanned = false;
+        window.started = false;
         window.onHostMessage = (msg) => {
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
-                if (!window.scanned) {
-                    window.scanned = true;
-                    window.pushLog(`<< RECV 2000. Start Scan.`);
-                    window.scanTypes(msg.clientMsgId);
+                if (!window.started) {
+                    window.started = true;
+                    window.pushLog(`<< RECV 2000. Start Mapping.`);
+                    window.startMapping();
                 }
             }
             else if (msg.payloadType === 2500) {
                 // ERROR RESPONSE
-                // Analyze the error message
+                // Format: "Unsupported PublicMessagePayloadType: XXXXX"
+                const id = msg.clientMsgId.replace("map-", "");
                 const txt = msg.payload || "";
-                const type = msg.clientMsgId.replace("scan-", "");
 
-                if (txt.includes("Unsupported")) {
-                    // Boring, ignore or sparse log
-                    // window.pushLog(`${type}: Unsupported`, "scan");
+                // Extract Name
+                let name = txt;
+                if (txt.includes(": ")) {
+                    name = txt.split(": ")[1];
+                }
+
+                // Filter interesting ones
+                if (name.includes("Auth") || name.includes("Sub") || name.includes("Req") || name.includes("Get")) {
+                    window.pushLog(`ID ${id} -> ${name}`, "hit");
                 } else {
-                    // INTERESTING!
-                    window.pushLog(`!!! HIT [${type}] !!!: ${txt}`, "hit");
+                    // Log others as standard map
+                    // window.pushLog(`ID ${id} -> ${name}`, "map"); 
+                    // Only log if it's NOT "Unsupported PublicMessagePayloadType" (raw)
+                    // Actually we want all mapping
+                    window.pushLog(`${id}: ${name}`, "map");
                 }
             }
             else {
                 // SUCCESS RESPONSE?
-                window.updateStatus("!!! SUCCESS !!!");
-                window.pushLog(`!!! RESPONSE [${msg.payloadType}] !!!: ${JSON.stringify(msg)}`, "hit");
+                window.pushLog(`!!! VALID [${msg.payloadType}] !!!`, "hit");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v31: Type Brute Force");
+            window.pushLog("Inspector v32: Protocol Mapper");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -158,26 +158,10 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v31: Finding Valid IDs
+        Inspector v32: ID -> Name Dictionary
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
-
-    <script>
-        setTimeout(() => {
-            if (window.logBuffer.length > 0) {
-                const el = document.getElementById('logs');
-                if (el && el.innerHTML === "") {
-                    window.logBuffer.forEach(l => {
-                        const d = document.createElement('div');
-                        d.className = "log " + (l.c || "");
-                        d.textContent = l.t;
-                        el.appendChild(d);
-                    });
-                }
-            }
-        }, 500);
-    </script>
 </body>
 
 </html>
