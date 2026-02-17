@@ -3,95 +3,154 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC v1.0</title>
+    <title>ALC v2.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #1a1a1a;
-            color: #eee;
-            font-family: sans-serif;
-            padding: 15px;
+            background: #121212;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 20px;
             margin: 0;
         }
 
         h1 {
-            font-size: 18px;
-            margin: 0 0 10px 0;
-            color: #4db8ff;
+            font-size: 20px;
+            margin: 0 0 15px 0;
+            color: #64b5f6;
+            font-weight: 600;
         }
 
         .card {
-            background: #2d2d2d;
+            background: #1e1e1e;
             padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
 
         .label {
-            font-size: 12px;
-            color: #aaa;
+            font-size: 11px;
+            color: #9e9e9e;
             margin-bottom: 4px;
+            display: block;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .value {
-            font-size: 16px;
+            font-size: 18px;
             font-weight: bold;
+            color: #fff;
         }
 
         .row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
+            align-items: center;
+            margin-bottom: 10px;
         }
 
+        .row:last-child {
+            margin-bottom: 0;
+        }
+
+        input,
         select,
         button {
             width: 100%;
-            padding: 10px;
-            background: #3d3d3d;
-            border: 1px solid #555;
+            box-sizing: border-box;
+            padding: 12px;
+            background: #2c2c2c;
+            border: 1px solid #424242;
             color: #fff;
-            border-radius: 4px;
-            margin-top: 5px;
-            cursor: pointer;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+            transition: 0.2s;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: #64b5f6;
+            background: #333;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
         }
 
         button {
-            background: #007acc;
+            background: #1976d2;
             border: none;
             font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            font-size: 14px;
+            letter-spacing: 0.5px;
         }
 
         button:active {
-            background: #005c99;
+            transform: translateY(1px);
+            background: #1565c0;
+        }
+
+        button.green {
+            background: #2e7d32;
+        }
+
+        button.red {
+            background: #c62828;
         }
 
         button:disabled {
-            background: #444;
-            color: #888;
+            background: #424242;
+            color: #757575;
+            cursor: not-allowed;
+            transform: none;
         }
 
         #log {
-            font-family: monospace;
+            font-family: "JetBrains Mono", monospace;
             font-size: 10px;
-            color: #666;
+            color: #757575;
             margin-top: 20px;
             white-space: pre-wrap;
+            word-break: break-all;
+            border-top: 1px solid #333;
+            padding-top: 10px;
         }
 
         .status {
             font-size: 12px;
-            padding: 5px;
+            margin-bottom: 10px;
+            text-align: right;
+            color: #757575;
+        }
+
+        .status.ok {
+            color: #69f0ae;
+        }
+
+        .status.warn {
+            color: #ffd740;
+        }
+
+        .status.err {
+            color: #ff5252;
+        }
+
+        .price {
+            font-size: 24px;
+            font-family: monospace;
+            color: #fff;
             text-align: center;
-            color: #aaa;
-        }
-
-        .ok {
-            color: #4f4;
-        }
-
-        .err {
-            color: #f44;
+            padding: 10px;
+            background: #000;
+            border-radius: 8px;
+            margin-top: 5px;
         }
     </style>
 
@@ -100,21 +159,23 @@
         const App = {
             accountId: null,
             balance: 0,
-            currency: "---",
+            currency: "USD",
             symbols: [],
-            selectedSymbol: null,
-            rate: 0 // Base->Deposit Rate (e.g. EURUSD price if account is USD)
+            selectedSymbol: null, // { Id, Name, Digits... }
+            currentPrice: { bid: 0, ask: 0 },
+            calculatedVol: 0
         };
 
         // --- TUNNEL LAYER ---
         const Tunnel = {
             queue: new Map(), // id -> callback
+            listeners: [],    // callbacks(msg)
 
             send: (commandId, payload, callback) => {
                 const bridge = window.EventBasedPluginJavaScriptBridge;
                 if (!bridge) return;
 
-                const innerMsgId = "req-" + commandId + "-" + Date.now();
+                const innerMsgId = "req-" + commandId + "-" + Date.now() + Math.floor(Math.random() * 100);
 
                 const innerMsg = {
                     payloadType: commandId,
@@ -122,69 +183,156 @@
                     payload: payload || {}
                 };
 
-                // Register callback
                 if (callback) Tunnel.queue.set(innerMsgId, callback);
 
-                // Wrap in 2100 (Tunnel)
+                // Wrap in 2100
                 const wrapper = {
                     payloadType: 2100,
                     clientMsgId: "wrap-" + innerMsgId,
-                    payload: innerMsg // Object nesting confirmed!
+                    payload: innerMsg
                 };
 
                 try {
                     bridge.handlePluginEvent(JSON.stringify(wrapper));
-                    // console.log(">> SENT", commandId);
                 } catch (e) {
                     console.error("Send Error", e);
+                    UI.log("Send Err: " + e.message);
                 }
             },
 
             onMessage: (wrapperMsg) => {
-                // Unwrap 2101
-                if (wrapperMsg.payloadType === 2101) {
-                    // Payload.data is Stringified JSON
-                    if (wrapperMsg.payload && wrapperMsg.payload.data) {
-                        try {
-                            const innerStr = wrapperMsg.payload.data;
-                            const innerMsg = JSON.parse(innerStr);
+                // Unwrap 2101 (Success) OR 2102 (Event/Error tunnel?) -> Actually events usually come in 2102?
+                // Wait, previous logs showed 2101 for ACK.
+                // But EVENTS (like quotes) might come as 2102 (ServerDataEvent).
 
-                            // Handle Callback
-                            if (Tunnel.queue.has(innerMsg.clientMsgId)) {
-                                const cb = Tunnel.queue.get(innerMsg.clientMsgId);
-                                Tunnel.queue.delete(innerMsg.clientMsgId);
-                                cb(innerMsg.payload);
-                            }
+                let innerMsg = null;
 
-                            // Handle Events
-                            if (innerMsg.payloadType === 2126) { // Execution/Quote Event? 
-                                // TODO
-                            }
+                try {
+                    if (wrapperMsg.payloadType === 2101 || wrapperMsg.payloadType === 2102) {
+                        // Check payload format
+                        let raw = wrapperMsg.payload;
+                        if (raw && raw.data && typeof raw.data === 'string') {
+                            innerMsg = JSON.parse(raw.data);
+                        } else if (raw && raw.payload && typeof raw.payload === 'object') {
+                            innerMsg = raw; // Already unwrapped? Unlikely based on fuzzer.
+                        }
+                    }
+                } catch (e) { UI.log("Unwrap Err: " + e.message); }
 
-                        } catch (e) { console.error("Parse Error", e); }
+                if (!innerMsg) {
+                    // If it's a direct System message
+                    if (wrapperMsg.payloadType === 2500) UI.log("SysErr: " + wrapperMsg.payload);
+                    return;
+                }
+
+                // Handle Callback
+                if (Tunnel.queue.has(innerMsg.clientMsgId)) {
+                    const cb = Tunnel.queue.get(innerMsg.clientMsgId);
+                    Tunnel.queue.delete(innerMsg.clientMsgId);
+                    cb(innerMsg.payload);
+                }
+
+                // Handle Global Listeners (Events)
+                Tunnel.listeners.forEach(l => l(innerMsg));
+            },
+
+            listen: (cb) => {
+                Tunnel.listeners.push(cb);
+            }
+        };
+
+        // --- LOGIC ---
+        const Logic = {
+            calcVol: () => {
+                if (!App.selectedSymbol) return;
+                if (!App.balance) return;
+
+                const riskP = parseFloat(document.getElementById('in_risk').value) || 0;
+                const slPips = parseFloat(document.getElementById('in_sl').value) || 0;
+
+                if (riskP <= 0 || slPips <= 0) {
+                    Logic.setResult(0, "Input Risk & SL");
+                    return;
+                }
+
+                const riskAmt = App.balance * (riskP / 100);
+
+                // SIMPLIFIED CALCULATION FOR DEMO
+                // Standard Lot = 100,000 units.
+                // 1 Pip (0.01 or 0.0001) value varies.
+                // Approx: Volume = RiskAmt / (SL_Pips * PipValue_Per_1_Vol)
+
+                // We need correct Pip Value.
+                // For USD Account & XXXUSD Pair: 1 Lot Pip Value = $10.
+                // For USD Account & USDJPY Pair: 1 Lot Pip Value = $1000 / Rate.
+
+                // Let's assume PipVal=$10 per Lot (standard) for V2.0 if metadata missing.
+                let pipValPerLot = 10;
+
+                if (App.selectedSymbol.Name.includes("JPY")) {
+                    if (App.currentPrice.bid > 0) {
+                        pipValPerLot = 1000 / App.currentPrice.bid; // Approx for USDJPY
                     }
                 }
-                // Unwrap 2102 (Server Data / Error)
-                else if (wrapperMsg.payloadType === 2102) {
-                    // handle events
-                }
-                // Error
-                else if (wrapperMsg.payloadType === 2500) {
-                    UI.log("Err: " + wrapperMsg.payload);
-                }
+
+                // Formula: riskAmt / (slPips * pipValPerOneLot)
+                // But slPips might be points? User enters PIPS.
+
+                const lots = riskAmt / (slPips * pipValPerLot);
+                // Convert to Cents (Volume)
+                // 1 Lot = 100,000 cents? No. 1 Lot = 100000 units.
+                // cTrader Volume is usually in Cents (Units * 100)? Or just Units?
+                // "Volume: Trade Volume, specified in cents (*100)" -> So 1 Lot (100k) = 10,000,000 "cents".
+
+                const volCents = Math.floor(lots * 100000 * 100);
+
+                // Normalize to Step Volume? (Assume 1000 min)
+                // Let's just output Lots for UI
+
+                App.calculatedVol = volCents;
+                Logic.setResult(lots.toFixed(2), `Risk: $${riskAmt.toFixed(2)}`);
+            },
+
+            setResult: (lots, msg) => {
+                document.getElementById('out_lots').textContent = lots + " Lots";
+                document.getElementById('out_msg').textContent = msg;
+
+                const btn = document.getElementById('btn_trade');
+                btn.disabled = (parseFloat(lots) <= 0);
+                if (!btn.disabled) btn.textContent = `BUY ${lots} LOTS`;
+                else btn.textContent = "TRADE";
+            },
+
+            placeOrder: () => {
+                if (App.calculatedVol <= 0) return;
+
+                UI.log("Sending Order...");
+
+                // 143: ProtoCreateNewOrderReq
+                const cmd = {
+                    symbolId: App.selectedSymbol.Id,
+                    orderType: 1, // MARKET
+                    tradeSide: 1, // BUY
+                    volume: App.calculatedVol
+                };
+
+                Tunnel.send(143, cmd, (res) => {
+                    UI.log("Order Res: " + JSON.stringify(res));
+                    // 2126: Execution Event usually follows
+                    if (res.errorCode) alert("Order Failed: " + res.errorCode);
+                    else alert("Order Sent!");
+                });
             }
         };
 
         // --- UI LAYER ---
         const UI = {
             init: () => {
-                // Listener
+                // Handle Bridge
                 window.addEventListener('message-from-host', (e) => {
                     const msg = e.data;
                     if (msg.payloadType === 2000) {
-                        // Auto-respond heartbeat
-                        // Tunnel.send(2001, null); // Actually 2001 is direct, not tunneled?
-                        // Let's send direct 2001
+                        // Ack Heartbeat
                         try {
                             window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({
                                 payloadType: 2001,
@@ -201,76 +349,76 @@
                         Tunnel.onMessage(msg);
                     }
                 });
+
+                // Inputs
+                document.getElementById('in_risk').oninput = Logic.calcVol;
+                document.getElementById('in_sl').oninput = Logic.calcVol;
+                document.getElementById('btn_trade').onclick = Logic.placeOrder;
+
+                // Events
+                Tunnel.listen((msg) => {
+                    // 3: ProtoQuoteEvent
+                    if (msg.payloadType === 3) {
+                        // payload: { symbolId, bid, ask } (Integers * 100000)
+                        if (App.selectedSymbol && msg.payload.symbolId === App.selectedSymbol.Id) {
+                            const bid = msg.payload.bid / 100000;
+                            const ask = msg.payload.ask / 100000;
+                            if (bid) App.currentPrice.bid = bid;
+                            if (ask) App.currentPrice.ask = ask;
+                            UI.renderPrice();
+                        }
+                    }
+                    // 300: ExecutionEvent
+                    if (msg.payloadType === 300) {
+                        UI.log("Exec: " + (msg.payload.executionType || "Unknown"));
+                    }
+                });
             },
 
             log: (txt) => {
                 const el = document.getElementById('log');
-                if (el) el.textContent = txt + "\n" + el.textContent.substring(0, 500);
-            },
-
-            setStatus: (txt, cls) => {
-                const el = document.getElementById('status');
                 if (el) {
-                    el.textContent = txt;
-                    el.className = "status " + (cls || "");
+                    // Shorten
+                    if (txt.length > 100) txt = txt.substring(0, 100) + "...";
+                    el.textContent = `> ${txt}\n` + el.textContent.substring(0, 500);
                 }
             },
 
             start: () => {
-                UI.setStatus("Connected. Fetching Account...", "ok");
+                document.getElementById('status').textContent = "Connected";
 
-                // 1. Get Account Info (175)
-                Tunnel.send(175, {}, (res) => { // ProtoGetAccountInformationRes (124)
+                // 175: GetAccount
+                Tunnel.send(175, {}, (res) => {
                     if (res.Trader) {
-                        App.accountId = res.Trader.TraderId; // Or Login
-                        App.balance = res.Trader.Balance / 100; // Cents? Usually.
-                        App.currency = res.DepositCurrency || "USD"; // Might be in Group?
-
+                        App.accountId = res.Trader.TraderId;
+                        App.balance = res.Trader.Balance / 100;
+                        App.currency = res.DepositCurrency || "USD";
                         UI.updateAccount();
                         UI.fetchSymbols();
+                    } else {
+                        UI.log("AccErr: " + JSON.stringify(res));
                     }
                 });
             },
 
             updateAccount: () => {
-                document.getElementById('acc_id').textContent = App.accountId || "---";
-                document.getElementById('acc_bal').textContent = (App.balance).toFixed(2);
-                document.getElementById('acc_curr').textContent = App.currency; // This might need separate call (Group Info 176)
-
-                if (App.currency === "---") {
-                    // Try Fetch Group (176)
-                    Tunnel.send(176, {}, (res) => {
-                        if (res.depositCurrency) {
-                            App.currency = res.depositCurrency;
-                            UI.updateAccount();
-                        }
-                    });
-                }
+                document.getElementById('acc_id').textContent = App.accountId;
+                document.getElementById('acc_bal').textContent = App.balance.toFixed(2) + " " + App.currency;
             },
 
             fetchSymbols: () => {
-                UI.setStatus("Fetching Symbols...");
-                // 841: GetLightSymbolList
-                Tunnel.send(841, { includeArchivedSymbols: false }, (res) => { // 842
+                Tunnel.send(841, { includeArchivedSymbols: false }, (res) => {
                     if (res.Symbol) {
-                        App.symbols = res.Symbol; // { Id, Name }
-                        UI.renderSymbols();
-                        UI.setStatus("Ready", "ok");
+                        App.symbols = res.Symbol;
+                        UI.renderSymbolSelector();
                     }
                 });
             },
 
-            renderSymbols: () => {
+            renderSymbolSelector: () => {
                 const sel = document.getElementById('sym_select');
-                sel.innerHTML = "";
-
-                // Sort by name
+                sel.innerHTML = "<option>Select Symbol</option>";
                 App.symbols.sort((a, b) => a.Name.localeCompare(b.Name));
-
-                // Populate
-                const def = document.createElement('option');
-                def.text = "Select Symbol";
-                sel.add(def);
 
                 App.symbols.forEach(s => {
                     const opt = document.createElement('option');
@@ -284,29 +432,38 @@
                     const s = App.symbols.find(x => x.Id === id);
                     if (s) {
                         App.selectedSymbol = s;
-                        UI.fetchSymbolDetails(id);
+                        UI.selectSymbol(s);
                     }
                 };
             },
 
-            fetchSymbolDetails: (id) => {
-                UI.setStatus(`Loading ${App.selectedSymbol.Name}...`);
-                // 163: GetSymbolReq (Detail)
-                Tunnel.send(163, { symbolId: [id] }, (res) => { // 164
+            selectSymbol: (s) => {
+                UI.log("Selected: " + s.Name);
+                document.getElementById('lbl_price').textContent = "---";
+
+                // 1. Subscribe (601)
+                // symbolId is RepeatedField, so array
+                // enableStaleQuotesFiltering: true?
+                Tunnel.send(601, { symbolId: [s.Id], subscribeToSpotTimestamp: true }, (res) => {
+                    UI.log("Subscribed: " + s.Name);
+                });
+
+                // 2. Fetch Details (163) - Retry for Metadata
+                Tunnel.send(163, { symbolId: [s.Id] }, (res) => {
                     if (res.symbol && res.symbol.length > 0) {
                         const det = res.symbol[0];
-                        // TickValue, LotSize etc?
-                        // We need to verify what fields we get.
-
-                        const el = document.getElementById('sym_detail');
-                        el.innerHTML = `
-                          <div class="row"><span class="label">ID</span><span class="value">${det.Id}</span></div>
-                          <div class="row"><span class="label">StepVol</span><span class="value">${det.StepVolume || "?"}</span></div>
-                          <div class="row"><span class="label">MinVol</span><span class="value">${det.MinVolume || "?"}</span></div>
-                      `;
-                        UI.setStatus("Done", "ok");
+                        UI.log("Det: " + JSON.stringify(det));
+                    } else {
+                        UI.log("DetErr: " + JSON.stringify(res));
                     }
                 });
+            },
+
+            renderPrice: () => {
+                const p = App.currentPrice;
+                document.getElementById('lbl_price').textContent = `${p.bid} / ${p.ask}`;
+                // Re-calc if needed
+                Logic.calcVol();
             }
         };
 
@@ -315,31 +472,58 @@
 </head>
 
 <body>
-    <h1>ALC v1.0</h1>
-    <div id="status" class="status">Waiting for Bridge...</div>
+    <div class="row">
+        <h1>ALC v2.0</h1>
+        <div id="status" class="status">Connecting...</div>
+    </div>
 
-    <!-- ACCOUNT CARD -->
+    <!-- ACCOUNT -->
     <div class="card">
         <div class="row">
-            <span class="label">Account</span>
-            <span class="value" id="acc_id">---</span>
-        </div>
-        <div class="row">
-            <span class="label">Balance</span>
-            <span class="value"><span id="acc_bal">0.00</span> <span id="acc_curr"></span></span>
+            <div>
+                <span class="label">Balance</span>
+                <div class="value" id="acc_bal">---</div>
+            </div>
+            <div style="text-align:right">
+                <span class="label">Account</span>
+                <div class="value" id="acc_id">---</div>
+            </div>
         </div>
     </div>
 
-    <!-- SYMBOL CARD -->
+    <!-- INPUTS -->
     <div class="card">
         <span class="label">Symbol</span>
         <select id="sym_select">
             <option>Loading...</option>
         </select>
-        <div id="sym_detail" style="margin-top:10px;"></div>
+
+        <div class="price" id="lbl_price">--- / ---</div>
+
+        <div class="row" style="gap:10px; margin-top:15px;">
+            <div style="flex:1">
+                <span class="label">Risk %</span>
+                <input type="number" id="in_risk" value="1.0" step="0.1">
+            </div>
+            <div style="flex:1">
+                <span class="label">Stop Loss (Pips)</span>
+                <input type="number" id="in_sl" value="20" step="1">
+            </div>
+        </div>
     </div>
 
-    <div id="log"></div>
+    <!-- RESULT -->
+    <div class="card" style="background: #263238;">
+        <div class="row">
+            <span class="label">Volume</span>
+            <span class="label" id="out_msg">Input Params</span>
+        </div>
+        <div class="value" id="out_lots" style="font-size:24px; color:#4db6ac;">0.00 Lots</div>
+
+        <button id="btn_trade" disabled style="margin-top:15px; padding:15px;">TRADE</button>
+    </div>
+
+    <div id="log">Logs will appear here...</div>
 </body>
 
 </html>
