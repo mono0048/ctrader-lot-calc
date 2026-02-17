@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Tunnel Borer</title>
+    <title>ALC Tunnel Fuzzer</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #002;
-            color: #fa0;
+            background: #102;
+            color: #f0f;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #fa0;
+            border: 2px solid #f0f;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,35 +24,32 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #420;
+            border-bottom: 1px solid #404;
             padding: 4px;
             word-break: break-all;
         }
 
         .try {
-            color: #fff;
+            color: #d8f;
         }
 
         .hit {
-            color: #0f0;
-            background: #040;
+            color: #fff;
+            background: #c00;
             font-weight: bold;
-            border: 1px solid #0f0;
+            border: 2px solid #fff;
+            padding: 5px;
         }
     </style>
 
     <script>
         // --- UTILS ---
-        window.logBuffer = [];
         window.pushLog = (msg, type) => {
-            const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
-            window.logBuffer.unshift({ t: line, c: type });
-            console.log(line);
             const el = document.getElementById('logs');
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.textContent = line;
+                div.textContent = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
                 el.insertBefore(div, el.firstChild);
             }
         };
@@ -62,86 +59,63 @@
             if (el) el.textContent = msg;
         };
 
-        // --- TUNNEL BORER ---
-        window.boreTunnel = (initMsgId) => {
+        // --- TUNNEL FUZZER ---
+        window.fuzzTunnel = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            // Get ID
+            // ID from URL
             const urlParams = new URLSearchParams(window.location.search);
-            const match = window.location.href.match(/id=(\d+)/);
-            const accId = match ? parseInt(match[1]) : 2614946;
+            const accId = parseInt(urlParams.get("id")) || 2614946;
 
-            window.updateStatus(`BORING TUNNEL (AccID: ${accId})...`);
+            window.updateStatus("FUZZING TUNNEL (2100)...");
 
-            // 1. Maintain Heartbeat
-            try {
-                bridge.handlePluginEvent(JSON.stringify({
-                    payloadType: 2001,
-                    clientMsgId: initMsgId,
-                    payload: null
-                }));
-            } catch (e) { }
+            // HEARTBEAT
+            try { bridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: initMsgId, payload: null })); } catch (e) { }
 
-            // THE INNER PAYLOAD (Account Auth 2102)
-            const innerAuth = {
+            // TARGET: 2102 (Account Auth) -> The inner message we want to send
+            const innerMsgObj = {
                 payloadType: 2102,
-                ctidTraderAccountId: accId,
-                token: "dummy"
+                clientMsgId: "inner-" + Date.now(),
+                payload: {
+                    ctidTraderAccountId: accId,
+                    token: "dummy_token"
+                }
             };
+            const innerMsgStr = JSON.stringify(innerMsgObj);
 
-            // VARIANT 1: Nested 'payload'
-            setTimeout(() => {
-                const packet = {
-                    payloadType: 2100, // Tunnel Req
-                    clientMsgId: "tun-pay-" + Date.now(),
-                    payload: innerAuth
-                };
-                window.sendPacket(packet, "Nested Payload");
-            }, 500);
+            // VARIATIONS
+            const variations = [
+                // 1. ROOT PAYLOAD (Object)
+                { name: "Payload:Obj", json: { payloadType: 2100, clientMsgId: "t1", payload: innerMsgObj } },
+                // 2. ROOT PAYLOAD (String)
+                { name: "Payload:Str", json: { payloadType: 2100, clientMsgId: "t2", payload: innerMsgStr } },
+                // 3. DATA FIELD
+                { name: "Data:Obj", json: { payloadType: 2100, clientMsgId: "t3", payload: { data: innerMsgObj } } },
+                { name: "Data:Str", json: { payloadType: 2100, clientMsgId: "t4", payload: { data: innerMsgStr } } },
+                // 4. MESSAGE FIELD
+                { name: "Msg:Obj", json: { payloadType: 2100, clientMsgId: "t5", payload: { message: innerMsgObj } } },
+                // 5. PROTO MESSAGE
+                { name: "Proto:Obj", json: { payloadType: 2100, clientMsgId: "t6", payload: { protoMessage: innerMsgObj } } },
+                // 6. FLAT (Merge)
+                { name: "Flat:Merge", json: { payloadType: 2100, clientMsgId: "t7", payloadType: 2100, ...innerMsgObj } } // Bad JSON but try valid merge
+                // { payloadType: 2100, clientMsgId: "t7", ctidTraderAccountId... }
+            ];
 
-            // VARIANT 2: Encapsulated String
-            setTimeout(() => {
-                const packet = {
-                    payloadType: 2100,
-                    clientMsgId: "tun-str-" + Date.now(),
-                    payload: JSON.stringify(innerAuth)
-                };
-                window.sendPacket(packet, "Nested String");
-            }, 1500);
+            // Special Flat Construction
+            const flatObj = { payloadType: 2100, clientMsgId: "t8", ...innerMsgObj.payload };
+            variations.push({ name: "Flat:Props", json: flatObj });
 
-            // VARIANT 3: 'protoMessage' field (Common in Proto mapping)
-            setTimeout(() => {
-                const packet = {
-                    payloadType: 2100,
-                    clientMsgId: "tun-proto-" + Date.now(),
-                    payload: {
-                        protoMessage: innerAuth
-                    }
-                };
-                window.sendPacket(packet, "protoMessage");
-            }, 2500);
-
-            // VARIANT 4: Test 2103 (Open Url) - Visual Confirmation
-            setTimeout(() => {
-                const packet = {
-                    payloadType: 2103, // OpenInternalUrlReq?
-                    clientMsgId: "nav-" + Date.now(),
-                    payload: {
-                        url: "https://www.google.com"
-                    }
-                };
-                window.sendPacket(packet, "2103 OpenUrl");
-            }, 3500);
-        };
-
-        window.sendPacket = (obj, label) => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            try {
-                const json = JSON.stringify(obj);
-                bridge.handlePluginEvent(json);
-                window.pushLog(`>> SENT [${label}]`, "try");
-            } catch (e) { window.pushLog("Err: " + e.message); }
+            let delay = 200;
+            variations.forEach(v => {
+                setTimeout(() => {
+                    try {
+                        bridge.handlePluginEvent(JSON.stringify(v.json));
+                        window.pushLog(`>> SENT [${v.name}]`, "try");
+                    } catch (e) { }
+                }, delay);
+                delay += 800;
+            });
         };
 
         // --- HANDLER ---
@@ -154,21 +128,33 @@
                 window.processedHeartbeats.add(msg.clientMsgId);
 
                 window.pushLog(`<< RECV 2000`);
-                window.boreTunnel(msg.clientMsgId);
+                window.fuzzTunnel(msg.clientMsgId);
             }
-            else if (msg.payloadType === 2101) { // SendServerDataRes
-                window.updateStatus("!!! SUCCESS !!! TUNNEL OPEN !!!");
-                window.pushLog(`!!! RESPONSE 2101 !!!: ${JSON.stringify(msg)}`, "hit");
+            else if (msg.payloadType === 2101) {
+                // 2101 = SendServerDataRes (ACK)
+                window.updateStatus("!!! TUNNEL OPENED (2101) !!!");
+                window.pushLog(`!!! ACK RECV [2101] !!! ${JSON.stringify(msg)}`, "hit");
             }
-            else if (msg.payloadType > 2000) {
-                window.updateStatus("!!! SUCCESS !!!");
-                window.pushLog(`!!! HIT [${msg.payloadType}] !!!: ${JSON.stringify(msg)}`, "hit");
+            else if (msg.payloadType === 2102) {
+                // 2102 = ServerDataEvent (DATA)
+                window.updateStatus("!!! DATA FLOWING (2102) !!!");
+                window.pushLog(`!!! DATA RECV [2102] !!! ${JSON.stringify(msg)}`, "hit");
+            }
+            else if (msg.payloadType === 2500) {
+                // Error
+                const txt = msg.payload || "";
+                // Ignore "Unsupported" logs if possible to reduce noise, unless unique
+                if (txt.includes("Unsupported")) {
+                    // window.pushLog("Err: 2500 Unsupported"); 
+                } else {
+                    window.pushLog(`Err [2500]: ${txt}`, "try");
+                }
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v34: Tunnel Borer");
+            window.pushLog("Inspector v35: Tunnel Fuzzer");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -179,7 +165,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v34: Wrapper Theory (2100 -> 2102)
+        Inspector v35: Finding the Wrapper
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
