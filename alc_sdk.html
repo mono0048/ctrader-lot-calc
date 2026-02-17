@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Tunnel Base64</title>
+    <title>ALC Tunnel Valid ID</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #ff0;
+            background: #002;
+            color: #fff;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #ff0;
+            border: 2px solid #fff;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,13 +24,13 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #440;
+            border-bottom: 1px solid #444;
             padding: 4px;
             word-break: break-all;
         }
 
         .try {
-            color: #aa0;
+            color: #aaa;
         }
 
         .hit {
@@ -59,93 +59,73 @@
             if (el) el.textContent = msg;
         };
 
-        // --- ENCODING FUZZER ---
-        window.fuzzEncoding = (initMsgId) => {
+        // --- VALID ID FUZZER ---
+        window.fuzzValidIds = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            window.updateStatus("FUZZING BASE64 (Ping 52)...");
+            window.updateStatus("FUZZING VALID IDs (841 / 175)...");
 
             // HEARTBEAT
             try { bridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: initMsgId, payload: null })); } catch (e) { }
 
-            // INNER MESSAGE: PING
-            // We want to send this object, but encoded.
-            const pingObj = {
-                payloadType: 52,
-                clientMsgId: "ping-" + Date.now(),
-                payload: { timestamp: Date.now() }
-            };
-            const pingJson = JSON.stringify(pingObj);
-            const pingB64 = btoa(pingJson); // Base64 of JSON string
+            // TARGETS (From documentation)
+            // 841: ProtoGetLightSymbolListReq
+            // 175: ProtoGetAccountInformationReq
 
-            // WRAPPER (2100)
-
-            const variants = [
-                // 1. Payload = Base64 String
-                {
-                    name: "Pay:B64",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "enc1",
-                        payload: pingB64
-                    }
-                },
-                // 2. Payload.data = Base64
-                {
-                    name: "Data:B64",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "enc2",
-                        payload: { data: pingB64 }
-                    }
-                },
-                // 3. Payload.message = Base64
-                {
-                    name: "Msg:B64",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "enc3",
-                        payload: { message: pingB64 }
-                    }
-                },
-                // 4. Payload.protoMessage = Base64
-                {
-                    name: "Proto:B64",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "enc4",
-                        payload: { protoMessage: pingB64 }
-                    }
-                },
-
-                // 5. DOUBLE WRAP? (2100 wraps 2102 wraps 52?)
-                // Unlikely.
-
-                // 6. RAW BYTES?
-                // Cannot send raw bytes via JSON.
-                // But maybe array of numbers?
-                {
-                    name: "Data:Arr",
-                    json: {
-                        payloadType: 2100,
-                        clientMsgId: "enc6",
-                        payload: {
-                            data: Array.from(pingJson).map(c => c.charCodeAt(0))
-                        }
-                    }
-                }
+            const targets = [
+                { id: 841, name: "GetSyms", payload: { includeArchivedSymbols: false } },
+                { id: 175, name: "GetAcc", payload: {} }
             ];
 
-            let delay = 200;
-            variants.forEach(v => {
-                setTimeout(() => {
-                    try {
-                        bridge.handlePluginEvent(JSON.stringify(v.json));
-                        window.pushLog(`>> SENT [${v.name}]`, "try");
-                    } catch (e) { }
-                }, delay);
-                delay += 800;
+            targets.forEach(t => {
+                const innerObj = {
+                    payloadType: t.id,
+                    clientMsgId: "req-" + t.id + "-" + Date.now(),
+                    payload: t.payload
+                };
+                const innerStr = JSON.stringify(innerObj);
+                const innerB64 = btoa(innerStr);
+
+                // VARIATIONS for 2100 Wrapper
+                const variants = [
+                    // 1. NESTED OBJECT
+                    {
+                        name: `${t.name}:Obj`,
+                        json: { payloadType: 2100, clientMsgId: "fw1", payload: innerObj }
+                    },
+                    // 2. NESTED STRING
+                    {
+                        name: `${t.name}:Str`,
+                        json: { payloadType: 2100, clientMsgId: "fw2", payload: innerStr }
+                    },
+                    // 3. BASE64 STRING
+                    {
+                        name: `${t.name}:B64`,
+                        json: { payloadType: 2100, clientMsgId: "fw3", payload: innerB64 }
+                    },
+                    // 4. PROTO MESSAGE Field
+                    {
+                        name: `${t.name}:Proto`,
+                        json: { payloadType: 2100, clientMsgId: "fw4", payload: { protoMessage: innerObj } }
+                    },
+                    // 5. DATA Field
+                    {
+                        name: `${t.name}:Data`,
+                        json: { payloadType: 2100, clientMsgId: "fw5", payload: { data: innerObj } }
+                    }
+                ];
+
+                let delay = 100;
+                variants.forEach(v => {
+                    setTimeout(() => {
+                        try {
+                            bridge.handlePluginEvent(JSON.stringify(v.json));
+                            window.pushLog(`>> SENT [${v.name}]`, "try");
+                        } catch (e) { }
+                    }, delay);
+                    delay += 600;
+                });
             });
         };
 
@@ -153,13 +133,20 @@
         window.processedHeartbeats = new Set();
         window.onHostMessage = (msg) => {
             if (!msg) return;
+
             if (msg.payloadType === 2000) {
                 if (window.processedHeartbeats.has(msg.clientMsgId)) return;
                 window.processedHeartbeats.add(msg.clientMsgId);
                 window.pushLog(`<< RECV 2000`);
-                window.fuzzEncoding(msg.clientMsgId);
+                window.fuzzValidIds(msg.clientMsgId);
             }
-            else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType > 2000) {
+            else if (msg.payloadType === 2101) {
+                // 2101 = SendServerDataRes -> SUCCESS
+                window.updateStatus("!!! SUCCESS (2101) !!!");
+                window.pushLog(`!!! ACK [2101] !!! ${JSON.stringify(msg)}`, "hit");
+            }
+            else if (msg.payloadType > 2000 && msg.payloadType !== 2500) {
+                // OTHER TUNNEL EVENT
                 window.updateStatus("!!! SUCCESS !!!");
                 window.pushLog(`!!! HIT [${msg.payloadType}] !!! ${JSON.stringify(msg)}`, "hit");
             }
@@ -173,7 +160,7 @@
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v37: Base64 Encoding");
+            window.pushLog("Inspector v38: Valid Protocols");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -184,7 +171,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v37: Base64 Encoded Ping
+        Inspector v38: Valid IDs (841/175)
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
