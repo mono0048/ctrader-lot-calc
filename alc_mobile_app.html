@@ -3,23 +3,44 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC v4.2 (Debug)</title>
+    <title>Auto Lot Calc</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
             background: #121212;
             color: #f5f5f5;
-            font-family: monospace;
-            padding: 10px;
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 24px;
             margin: 0;
         }
 
         .card {
             background: #1e1e1e;
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 15px;
-            border: 1px solid #333;
+            padding: 20px;
+            border-radius: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+            display: block;
+            font-weight: 600;
+        }
+
+        .value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .mono {
+            font-family: "Roboto Mono", monospace;
+            letter-spacing: -0.5px;
         }
 
         .row {
@@ -28,90 +49,150 @@
             align-items: center;
         }
 
+        .col {
+            display: flex;
+            flex-direction: column;
+        }
+
         input,
         select,
         button {
             width: 100%;
-            padding: 12px;
+            box-sizing: border-box;
+            padding: 16px;
             background: #2a2a2a;
             border: 1px solid #333;
             color: #fff;
-            margin-top: 5px;
+            border-radius: 12px;
+            font-size: 18px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: #448aff;
+            background: #333;
+        }
+
+        select {
+            background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+            background-size: 12px;
+            padding-right: 40px;
         }
 
         button.trade {
-            background: #2962ff;
-            font-weight: bold;
+            background: linear-gradient(135deg, #2962ff, #448aff);
+            border: none;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 4px 15px rgba(41, 98, 255, 0.4);
+            margin-top: 10px;
+        }
+
+        button.trade:active {
+            transform: scale(0.98);
+            box-shadow: 0 2px 8px rgba(41, 98, 255, 0.3);
+        }
+
+        button:disabled {
+            background: #333;
+            color: #555;
+            box-shadow: none;
+        }
+
+        #modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background: #1e1e1e;
+            padding: 30px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 80%;
+            border: 1px solid #333;
+        }
+
+        .success-icon {
+            color: #00e676;
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        #log-toggle {
+            font-size: 10px;
+            color: #444;
+            text-align: center;
+            margin-top: 30px;
         }
 
         #log {
-            font-size: 10px;
-            color: #0f0;
+            display: none;
+            font-family: "JetBrains Mono", monospace;
+            font-size: 9px;
+            color: #666;
             white-space: pre-wrap;
+            margin-top: 10px;
             border-top: 1px solid #333;
-            margin-top: 20px;
             padding-top: 10px;
-            height: 300px;
-            overflow-y: scroll;
-        }
-
-        .label {
-            font-size: 10px;
-            color: #888;
-            text-transform: uppercase;
-        }
-
-        .val {
-            font-size: 18px;
-            font-weight: bold;
         }
     </style>
 
     <script>
-        function P(o, k) {
-            if (!o) return undefined;
-            if (o[k] !== undefined) return o[k];
-            var c = k[0].toUpperCase() + k.slice(1);
-            if (o[c] !== undefined) return o[c];
-            c = k[0].toLowerCase() + k.slice(1);
-            if (o[c] !== undefined) return o[c];
+        function P(obj, key) {
+            if (!obj) return undefined;
+            if (obj[key] !== undefined) return obj[key];
+            const pascal = key.charAt(0).toUpperCase() + key.slice(1);
+            if (obj[pascal] !== undefined) return obj[pascal];
+            const camel = key.charAt(0).toLowerCase() + key.slice(1);
+            if (obj[camel] !== undefined) return obj[camel];
             return undefined;
         }
 
-        const App = { acc: "---", bal: 0, cur: "USD", sym: null, bid: 0, vol: 0 };
+        const App = { account: "---", balance: 0, currency: "USD", symbol: null, price: 0, volUnits: 0, volLots: 0 };
 
         const Tunnel = {
-            q: new Map(),
+            queue: new Map(),
             send: (id, pl, cb) => {
-                const mid = "r-" + id + "-" + Math.random().toString(36).substr(2, 5);
-                if (cb) Tunnel.q.set(mid, cb);
-                const w = { payloadType: 2100, clientMsgId: mid, payload: { payloadType: id, clientMsgId: mid, payload: pl || {} } };
-                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(w)); } catch (e) { log("SendFail:" + e); }
+                const mid = "req-" + id + "-" + Date.now() + Math.random().toString(36).substr(2, 5);
+                if (cb) Tunnel.queue.set(mid, cb);
+                const w = { payloadType: 2100, clientMsgId: "w-" + mid, payload: { payloadType: id, clientMsgId: mid, payload: pl || {} } };
+                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(w)); } catch (e) { }
             },
             onMsg: (w) => {
-                let i = w.payload;
-                // Unwrap 2101/2102 data string
-                if ((w.payloadType === 2101 || w.payloadType === 2102) && i && i.data && typeof i.data === 'string') {
-                    try { i = JSON.parse(i.data); } catch (e) { }
-                }
-                if (!i) return;
+                let inn = null;
+                try {
+                    if (w.payloadType === 2101 || w.payloadType === 2102) {
+                        const py = w.payload;
+                        inn = (py && py.data && typeof py.data === 'string') ? JSON.parse(py.data) : py;
+                    }
+                } catch (e) { }
+                if (!inn) return;
 
-                const mid = P(i, "clientMsgId");
-                const type = P(i, "payloadType");
-                const pl = P(i, "payload");
+                const mid = P(inn, "clientMsgId");
+                const pl = P(inn, "payload");
 
-                // Logs for debugging 601/3
-                if (type !== 2001) { // Ignore Heartbeat ACK
-                    // log(`In[${type}] mid=${mid}`);
-                }
-
-                if (mid && Tunnel.q.has(mid)) {
-                    Tunnel.q.get(mid)(pl);
-                    Tunnel.q.delete(mid);
+                if (mid && Tunnel.queue.has(mid)) {
+                    Tunnel.queue.get(mid)(pl);
+                    Tunnel.queue.delete(mid);
                 }
 
-                // Events
-                if (type === 3 || type === "PROTO_QUOTE_EVENT") Logic.onQuote(i); // Pass WHOLE msg
+                const type = P(inn, "payloadType");
+                if (type === 3 || type === "PROTO_QUOTE_EVENT") Logic.onQuote(inn.payload || inn);
             }
         };
 
@@ -122,152 +203,210 @@
                     if (m.payloadType === 2000) {
                         try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: m.clientMsgId, payload: null })); } catch (e) { }
                         if (!App.ready) { App.ready = true; Logic.start(); }
-                    } else {
-                        Tunnel.onMsg(m);
-                    }
+                    } else { Tunnel.onMsg(m); }
                 });
-                document.getElementById('trade').onclick = Logic.trade;
-                document.getElementById('risk').oninput = Logic.calc;
+                ['in_risk', 'in_sl'].forEach(id => document.getElementById(id).oninput = Logic.calc);
+                document.getElementById('btn_trade').onclick = Logic.trade;
             },
-            start: () => {
-                log("Connected. Fetching Acc...");
-                Tunnel.send(175, {}, r => {
-                    const t = P(r, "trader");
-                    if (t) {
-                        App.acc = P(t, "login");
-                        App.bal = (P(t, "balance") || 0) / 100;
-                        App.cur = P(r, "depositCurrency") || "USD";
-                        UI.upd();
-                        Logic.syms();
-                    } else log("AccErr:" + JSON.stringify(r));
-                });
-            },
-            syms: () => {
-                Tunnel.send(841, { includeArchivedSymbols: false }, r => {
-                    const s = P(r, "symbol");
-                    if (s) {
-                        const el = document.getElementById('sym');
-                        el.innerHTML = "<option>Select...</option>";
-                        s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
-                        s.forEach(x => {
-                            const o = document.createElement('option');
-                            o.value = P(x, "id");
-                            o.text = P(x, "name");
-                            el.add(o);
-                        });
-                        el.onchange = () => Logic.sel(el.value);
-                    }
-                });
-            },
-            sel: (sid) => {
-                sid = parseInt(sid);
-                log(`Selecting ${sid}...`);
-                Tunnel.send(163, { symbolId: [sid] }, r => { // Details
-                    const l = P(r, "symbol");
-                    if (l && l[0]) {
-                        App.sym = l[0];
-                        log(`Details OK. Step=${P(App.sym, "stepVolume")}. Subscribing...`);
-                        Tunnel.send(601, { symbolId: [sid], subscribeToSpotTimestamp: true });
-                        Logic.calc();
-                    } else log("DetErr:" + JSON.stringify(r));
-                });
-            },
-            onQuote: (msg) => {
-                // Try to find payload
-                let q = P(msg, "payload");
-                if (!q) q = msg; // Flat?
 
+            start: () => {
+                document.getElementById('status').innerText = "ONLINE";
+                document.getElementById('status').style.color = "#00e676";
+                Tunnel.send(175, {}, res => {
+                    const t = P(res, "trader");
+                    if (t) {
+                        App.account = P(t, "login");
+                        App.balance = (P(t, "balance") || 0) / 100;
+                        App.currency = P(res, "depositCurrency") || "USD";
+                        UI.updateAcc();
+                        Logic.loadSyms();
+                    }
+                });
+            },
+
+            loadSyms: () => {
+                Tunnel.send(841, { includeArchivedSymbols: false }, res => {
+                    const s = P(res, "symbol");
+                    if (s) {
+                        s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
+                        UI.fillSyms(s);
+                    }
+                });
+            },
+
+            selectSym: (id) => {
+                Tunnel.send(163, { symbolId: [id] }, res => {
+                    const l = P(res, "symbol");
+                    if (l && l[0]) {
+                        App.symbol = l[0];
+                        // FIX: Ensure ID is set for comparison
+                        App.symbol.id = id;
+
+                        let step = P(App.symbol, "stepVolume") || 1000;
+                        if (step > 10000) step = step / 100;
+                        App.symbol._step = step;
+
+                        // Restore Spot Timestamp
+                        Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
+                        Logic.calc();
+                    }
+                });
+            },
+
+            onQuote: (q) => {
                 const sid = P(q, "symbolId");
-                if (App.sym && P(App.sym, "id") == sid) {
+                if (App.symbol && P(App.symbol, "id") == sid) {
                     const bid = P(q, "bid");
                     if (bid) {
-                        App.bid = bid / 100000;
-                        UI.upd();
+                        App.price = bid / 100000;
+                        UI.updatePrice();
                         Logic.calc();
-                        // log(`Quote: ${App.bid}`); // Too spammy if working
                     }
-                } else {
-                    if (App.sym) log(`QuoteMismatch: Got ${sid} Want ${P(App.sym, "id")}`);
                 }
             },
+
             calc: () => {
-                if (!App.sym || !App.bid) return;
-                const r = parseFloat(document.getElementById('risk').value);
-                const sl = parseFloat(document.getElementById('sl').value);
-                const bal = App.bal;
+                if (!App.symbol || !App.price) return;
+                const r = parseFloat(document.getElementById('in_risk').value);
+                const sl = parseFloat(document.getElementById('in_sl').value);
+                if (!r || !sl) return;
+
+                const riskAmt = App.balance * (r / 100);
 
                 let pv = 10;
-                if (P(App.sym, "name").includes("JPY")) pv = 1000 / App.bid;
+                const name = P(App.symbol, "name");
+                if (name && name.indexOf("JPY") !== -1) pv = 1000 / App.price;
 
-                const riskAmt = bal * (r / 100);
-                let raw = riskAmt / (sl * pv);
+                let lots = riskAmt / (sl * pv);
 
-                // Norm
-                let units = raw * 100000;
-                let step = P(App.sym, "stepVolume") || 1000;
-                if (step > 10000) step = step / 100;
+                let units = lots * 100000;
+                const step = App.symbol._step || 1000;
                 units = Math.floor(units / step) * step;
 
-                App.vol = units;
-                document.getElementById('vol').innerText = (units / 100000).toFixed(2) + " Lots";
-                document.getElementById('trade').disabled = (units <= 0);
+                App.volUnits = units;
+                App.volLots = units / 100000;
+
+                UI.updateCalc(riskAmt);
             },
+
             trade: () => {
-                if (App.vol <= 0) return;
-                log(`Ordering ${App.vol} units...`);
+                if (App.volUnits <= 0) return;
+                document.getElementById('btn_trade').innerText = "SENDING...";
+                document.getElementById('btn_trade').disabled = true;
+
                 const cmd = {
-                    symbolId: P(App.sym, "id"),
-                    orderType: 1, tradeSide: 1, volume: App.vol
+                    symbolId: App.symbol.id, // Use validated ID
+                    orderType: 1, tradeSide: 1, volume: App.volUnits
                 };
-                Tunnel.send(143, cmd, r => {
-                    log("OrdRes:" + JSON.stringify(r));
-                    if (P(r, "errorCode")) alert("Error: " + P(r, "errorCode"));
-                    else alert("Success!");
+
+                Tunnel.send(143, cmd, res => {
+                    document.getElementById('btn_trade').innerText = "PLACE ORDER";
+                    document.getElementById('btn_trade').disabled = false;
+
+                    const err = P(res, "errorCode");
+                    if (err) UI.showModal("ERROR", err);
+                    else UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
                 });
             }
         };
 
         const UI = {
-            upd: () => {
-                document.getElementById('acc').innerText = `${App.acc} | ${App.bal.toFixed(2)} ${App.cur}`;
-                document.getElementById('price').innerText = App.bid.toFixed(3);
+            updateAcc: () => {
+                document.getElementById('acc_id').textContent = App.account;
+                document.getElementById('acc_bal').textContent = App.balance.toFixed(2) + " " + App.currency;
+            },
+            fillSyms: (list) => {
+                const s = document.getElementById('sym_select');
+                s.innerHTML = "<option>Select Symbol</option>";
+                list.forEach(i => {
+                    const o = document.createElement('option');
+                    o.value = P(i, "id");
+                    o.text = P(i, "name");
+                    s.add(o);
+                });
+                s.onchange = () => Logic.selectSym(parseInt(s.value));
+            },
+            updatePrice: () => {
+                document.getElementById('lbl_price').textContent = App.price.toFixed(3);
+                document.getElementById('lbl_price').style.color = "#fff";
+            },
+            updateCalc: (risk) => {
+                document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
+                document.getElementById('out_risk').textContent = "Risk: $" + risk.toFixed(2);
+                document.getElementById('btn_trade').disabled = (App.volUnits <= 0);
+            },
+            showModal: (title, msg) => {
+                const m = document.getElementById('modal');
+                m.style.display = "flex";
+                const c = m.querySelector('.modal-content');
+                c.innerHTML = `
+                <div class="success-icon">${title === 'SUCCESS' ? '✔' : '⚠'}</div>
+                <h3 style="margin:0 0 10px 0">${title}</h3>
+                <p>${msg}</p>
+                <button onclick="document.getElementById('modal').style.display='none'" style="margin-top:15px; background:#444">CLOSE</button>
+            `;
             }
-        }
-        function log(x) { document.getElementById('log').textContent = `> ${x}\n` + document.getElementById('log').textContent.substring(0, 1000); }
+        };
+
         window.onload = Logic.init;
     </script>
 </head>
 
 <body>
-    <div class="card">
-        <div class="label">Account</div>
-        <div class="val" id="acc">Loading...</div>
+    <div class="row" style="margin-bottom:10px">
+        <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
+                style="color:#fff">CALC</span></div>
+        <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
-    <div class="card">
-        <div class="label">Symbol</div>
-        <select id="sym"></select>
-        <div class="val" id="price" style="margin-top:10px; color:#448aff">---</div>
-    </div>
-
-    <div class="card">
-        <div class="row" style="gap:10px">
-            <div>
-                <div class="label">Risk %</div><input id="risk" type="number" value="1.0" step="0.1">
+    <div class="card" style="background: linear-gradient(135deg, #1e1e1e, #252525);">
+        <div class="row">
+            <div class="col">
+                <span class="label">Balance</span>
+                <div class="value mono" id="acc_bal">---</div>
             </div>
-            <div>
-                <div class="label">SL (Pips)</div><input id="sl" type="number" value="20">
+            <div class="col" style="align-items:flex-end">
+                <span class="label">Account</span>
+                <div class="value" id="acc_id" style="font-size:16px; color:#888;">---</div>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <div class="label">Volume</div>
-        <div class="val" id="vol" style="color:#00e676">0.00 Lots</div>
-        <button id="trade" class="trade" disabled>TRADE</button>
+        <span class="label">Trading Pair</span>
+        <select id="sym_select">
+            <option>Loading...</option>
+        </select>
+
+        <div style="margin-top:20px; text-align:center;">
+            <div class="value mono" id="lbl_price" style="font-size:32px; color:#555">---</div>
+        </div>
     </div>
 
-    <div id="log">Logs...</div>
+    <div class="row" style="gap:15px; margin-bottom:16px;">
+        <div class="card" style="flex:1; margin:0; padding:15px;">
+            <span class="label">Risk %</span>
+            <input type="number" id="in_risk" value="1.0" step="0.1">
+        </div>
+        <div class="card" style="flex:1; margin:0; padding:15px;">
+            <span class="label">SL (Pips)</span>
+            <input type="number" id="in_sl" value="20" step="1">
+        </div>
+    </div>
+
+    <div class="card" style="border: 1px solid #333;">
+        <div class="row">
+            <span class="label">Volume</span>
+            <span class="label" id="out_risk">Risk: $0.00</span>
+        </div>
+        <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
+
+        <button id="btn_trade" class="trade" disabled>Place Order</button>
+    </div>
+
+    <div id="modal">
+        <div class="modal-content"></div>
+    </div>
 </body>
 
 </html>
