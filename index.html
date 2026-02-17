@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Protocol Mapper</title>
+    <title>ALC Smart Mapper</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -23,42 +23,39 @@
         }
 
         .log {
-            font-size: 10px;
+            font-size: 11px;
             border-bottom: 1px solid #333;
-            padding: 2px;
+            padding: 4px;
             word-break: break-all;
-            white-space: nowrap;
-            overflow: hidden;
         }
 
         .hit {
             color: #0f0;
             background: #040;
             font-weight: bold;
+            border: 1px solid #0f0;
         }
 
         .map {
             color: #fb0;
         }
+
+        .unique {
+            color: #aaf;
+        }
     </style>
 
     <script>
         // --- UTILS ---
-        window.logBuffer = [];
         window.pushLog = (msg, type) => {
-            const line = `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`;
-            // window.logBuffer.unshift({t:line, c:type}); // No buffer for high volume
-
-            // append directly for performance
             const el = document.getElementById('logs');
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.textContent = line;
+                div.textContent = msg; // Text only to be safe
                 el.insertBefore(div, el.firstChild);
-
-                // Limit DOM
-                if (el.children.length > 500) el.removeChild(el.lastChild);
+                // Limit history
+                if (el.children.length > 100) el.removeChild(el.lastChild);
             }
         };
 
@@ -67,87 +64,117 @@
             if (el) el.textContent = msg;
         };
 
-        // --- MAPPER ---
-        window.scanRange = (start, end) => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge) return;
+        // --- SMART MAPPER ---
+        window.knownNames = new Set();
 
-            // Batch send
-            for (let i = start; i <= end; i++) {
-                try {
-                    bridge.handlePluginEvent(JSON.stringify({
-                        payloadType: i,
-                        clientMsgId: "map-" + i,
-                        payload: {}
-                    }));
-                } catch (e) { }
-            }
+        // Ranges of interest:
+        // 0-100: Basic Proto
+        // 1000-1100: ???
+        // 2000-2200: Open API v2
+        window.ranges = [
+            [0, 100],
+            [1000, 1050],
+            [2000, 2200]
+        ];
+        window.currentRangeIdx = 0;
+        window.currentId = 0;
+        window.isScanning = false;
+
+        window.startSmartScan = () => {
+            if (window.isScanning) return;
+            window.isScanning = true;
+
+            window.currentRangeIdx = 0;
+            window.currentId = window.ranges[0][0];
+            window.scanNext();
         };
 
-        window.startMapping = () => {
-            window.updateStatus("MAPPING PROTOCOL (0-3000)...");
+        window.scanNext = () => {
+            if (!window.isScanning) return;
 
-            let cursor = 0;
-            const batch = 100;
-            const max = 3000;
-
-            const next = () => {
-                if (cursor > max) {
-                    window.pushLog("MAPPING COMPLETE", "hit");
+            // Check bounds
+            const range = window.ranges[window.currentRangeIdx];
+            if (window.currentId > range[1]) {
+                // Next range
+                window.currentRangeIdx++;
+                if (window.currentRangeIdx >= window.ranges.length) {
+                    window.updateStatus("SCAN COMPLETE");
+                    window.isScanning = false;
                     return;
                 }
-                window.scanRange(cursor, cursor + batch - 1);
-                cursor += batch;
-                setTimeout(next, 250); // Throttle
-            };
+                window.currentId = window.ranges[window.currentRangeIdx][0];
+            }
 
-            next();
+            const id = window.currentId;
+            window.updateStatus(`SCANNING: ${id}`);
+
+            // Send
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            try {
+                bridge.handlePluginEvent(JSON.stringify({
+                    payloadType: id,
+                    clientMsgId: "map-" + id,
+                    payload: {}
+                }));
+            } catch (e) { }
+
+            window.currentId++;
+
+            // SLOW DOWN: 50ms = 20 req/s. Should be safe.
+            // If crash recurs, user can report, we increase to 200ms.
+            setTimeout(window.scanNext, 50);
         };
 
         // --- HANDLER ---
-        window.started = false;
         window.onHostMessage = (msg) => {
             if (!msg) return;
 
             if (msg.payloadType === 2000) {
-                if (!window.started) {
-                    window.started = true;
-                    window.pushLog(`<< RECV 2000. Start Mapping.`);
-                    window.startMapping();
+                // Only start once
+                if (!window.isScanning) {
+                    window.pushLog(`<< RECV 2000. Starting Gentle Scan...`);
+                    window.startSmartScan();
                 }
             }
             else if (msg.payloadType === 2500) {
-                // ERROR RESPONSE
-                // Format: "Unsupported PublicMessagePayloadType: XXXXX"
-                const id = msg.clientMsgId.replace("map-", "");
+                // ERROR: "Unsupported...: NAME"
+                const idStr = msg.clientMsgId.replace("map-", "");
                 const txt = msg.payload || "";
 
                 // Extract Name
-                let name = txt;
+                let name = "Unknown";
                 if (txt.includes(": ")) {
                     name = txt.split(": ")[1];
+                } else {
+                    name = txt;
                 }
 
-                // Filter interesting ones
-                if (name.includes("Auth") || name.includes("Sub") || name.includes("Req") || name.includes("Get")) {
-                    window.pushLog(`ID ${id} -> ${name}`, "hit");
-                } else {
-                    // Log others as standard map
-                    // window.pushLog(`ID ${id} -> ${name}`, "map"); 
-                    // Only log if it's NOT "Unsupported PublicMessagePayloadType" (raw)
-                    // Actually we want all mapping
-                    window.pushLog(`${id}: ${name}`, "map");
+                // UNLOCK: Only log UNIQUE names to save memory/UI
+                if (!window.knownNames.has(name)) {
+                    window.knownNames.add(name);
+
+                    // Highlight gold
+                    if (name.toLowerCase().includes("auth") ||
+                        name.toLowerCase().includes("sub") ||
+                        name.toLowerCase().includes("req")) {
+                        window.pushLog(`!!! FOUND ID ${idStr}: ${name}`, "hit");
+                    } else {
+                        window.pushLog(`New Type [${idStr}]: ${name}`, "unique");
+                    }
                 }
+
+                // Always update status with last found
+                // window.updateStatus(`SCANNING ${window.currentId} (Found: ${name})`);
             }
             else {
-                // SUCCESS RESPONSE?
-                window.pushLog(`!!! VALID [${msg.payloadType}] !!!`, "hit");
+                // SUCCESS?
+                window.pushLog(`!!! VALID RESPONSE [${msg.payloadType}] !!!`, "hit");
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v32: Protocol Mapper");
+            window.pushLog("Inspector v33: Gentle Mapper");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -158,7 +185,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v32: ID -> Name Dictionary
+        Inspector v33: Gentle & Unique Log
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
