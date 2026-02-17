@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Tunnel Fuzzer</title>
+    <title>ALC Tunnel Structure</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #102;
-            color: #f0f;
+            background: #011;
+            color: #0ff;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #f0f;
+            border: 2px solid #0ff;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,18 +24,18 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #404;
+            border-bottom: 1px solid #044;
             padding: 4px;
             word-break: break-all;
         }
 
         .try {
-            color: #d8f;
+            color: #8ff;
         }
 
         .hit {
-            color: #fff;
-            background: #c00;
+            color: #000;
+            background: #0f0;
             font-weight: bold;
             border: 2px solid #fff;
             padding: 5px;
@@ -59,55 +59,106 @@
             if (el) el.textContent = msg;
         };
 
-        // --- TUNNEL FUZZER ---
-        window.fuzzTunnel = (initMsgId) => {
+        // --- STRUCTURE FUZZER ---
+        window.fuzzStructure = (initMsgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
             if (!bridge) return;
 
-            // ID from URL
-            const urlParams = new URLSearchParams(window.location.search);
-            const accId = parseInt(urlParams.get("id")) || 2614946;
-
-            window.updateStatus("FUZZING TUNNEL (2100)...");
+            window.updateStatus("FUZZING STRUCTURE (Ping 52)...");
 
             // HEARTBEAT
             try { bridge.handlePluginEvent(JSON.stringify({ payloadType: 2001, clientMsgId: initMsgId, payload: null })); } catch (e) { }
 
-            // TARGET: 2102 (Account Auth) -> The inner message we want to send
-            const innerMsgObj = {
-                payloadType: 2102,
-                clientMsgId: "inner-" + Date.now(),
-                payload: {
-                    ctidTraderAccountId: accId,
-                    token: "dummy_token"
-                }
+            // INNER MESSAGE: PING (No Auth Needed)
+            // Standard Open API: { payloadType: 52, clientMsgId: "...", payload: { timestamp: ... } }
+            const pingPayload = { timestamp: Date.now() };
+            const pingMsg = {
+                payloadType: 52,
+                clientMsgId: "ping-" + Date.now(),
+                payload: pingPayload
             };
-            const innerMsgStr = JSON.stringify(innerMsgObj);
 
-            // VARIATIONS
-            const variations = [
-                // 1. ROOT PAYLOAD (Object)
-                { name: "Payload:Obj", json: { payloadType: 2100, clientMsgId: "t1", payload: innerMsgObj } },
-                // 2. ROOT PAYLOAD (String)
-                { name: "Payload:Str", json: { payloadType: 2100, clientMsgId: "t2", payload: innerMsgStr } },
-                // 3. DATA FIELD
-                { name: "Data:Obj", json: { payloadType: 2100, clientMsgId: "t3", payload: { data: innerMsgObj } } },
-                { name: "Data:Str", json: { payloadType: 2100, clientMsgId: "t4", payload: { data: innerMsgStr } } },
-                // 4. MESSAGE FIELD
-                { name: "Msg:Obj", json: { payloadType: 2100, clientMsgId: "t5", payload: { message: innerMsgObj } } },
-                // 5. PROTO MESSAGE
-                { name: "Proto:Obj", json: { payloadType: 2100, clientMsgId: "t6", payload: { protoMessage: innerMsgObj } } },
-                // 6. FLAT (Merge)
-                { name: "Flat:Merge", json: { payloadType: 2100, clientMsgId: "t7", payloadType: 2100, ...innerMsgObj } } // Bad JSON but try valid merge
-                // { payloadType: 2100, clientMsgId: "t7", ctidTraderAccountId... }
+            // WRAPPER (2100)
+            // We need to put `pingMsg` into `2100`.
+
+            const variants = [
+                // 1. NESTED STANDARD (Object)
+                {
+                    name: "Nest:Std",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w1",
+                        payload: pingMsg
+                    }
+                },
+                // 2. NESTED STRING
+                {
+                    name: "Nest:Str",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w2",
+                        payload: JSON.stringify(pingMsg)
+                    }
+                },
+                // 3. FLATTENED (Bridge style maybe?)
+                // Maybe 2100 just takes type "52"? No, 2100 is the type.
+
+                // 4. PROTO MESSAGE FIELD (Verified in some cTrader wrappers)
+                {
+                    name: "Proto:Obj",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w4",
+                        payload: { protoMessage: pingMsg }
+                    }
+                },
+                {
+                    name: "Proto:Str",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w4s",
+                        payload: { protoMessage: JSON.stringify(pingMsg) }
+                    }
+                },
+
+                // 5. GENERIC "DATA" FIELD
+                {
+                    name: "Data:Msg",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w5",
+                        payload: { data: pingMsg }
+                    }
+                },
+
+                // 6. ALTERNATE FIELD NAMES for Inner ID
+                // Maybe it's not "payloadType" inside?
+                {
+                    name: "Alt:Type",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w6",
+                        payload: {
+                            type: 52,
+                            body: pingPayload
+                        }
+                    }
+                },
+                {
+                    name: "Alt:Id",
+                    json: {
+                        payloadType: 2100,
+                        clientMsgId: "w7",
+                        payload: {
+                            id: 52,
+                            message: pingPayload
+                        }
+                    }
+                }
             ];
 
-            // Special Flat Construction
-            const flatObj = { payloadType: 2100, clientMsgId: "t8", ...innerMsgObj.payload };
-            variations.push({ name: "Flat:Props", json: flatObj });
-
             let delay = 200;
-            variations.forEach(v => {
+            variants.forEach(v => {
                 setTimeout(() => {
                     try {
                         bridge.handlePluginEvent(JSON.stringify(v.json));
@@ -128,25 +179,22 @@
                 window.processedHeartbeats.add(msg.clientMsgId);
 
                 window.pushLog(`<< RECV 2000`);
-                window.fuzzTunnel(msg.clientMsgId);
+                window.fuzzStructure(msg.clientMsgId);
             }
             else if (msg.payloadType === 2101) {
-                // 2101 = SendServerDataRes (ACK)
-                window.updateStatus("!!! TUNNEL OPENED (2101) !!!");
-                window.pushLog(`!!! ACK RECV [2101] !!! ${JSON.stringify(msg)}`, "hit");
+                // ACK
+                window.updateStatus("!!! TUNNEL OPEN (ACK) !!!");
+                window.pushLog(`!!! ACK [2101] !!! ${JSON.stringify(msg)}`, "hit");
             }
             else if (msg.payloadType === 2102) {
-                // 2102 = ServerDataEvent (DATA)
-                window.updateStatus("!!! DATA FLOWING (2102) !!!");
-                window.pushLog(`!!! DATA RECV [2102] !!! ${JSON.stringify(msg)}`, "hit");
+                // DATA from Server (Tunnel)
+                // If we sent Ping (52), we expect Pong (53) inside this 2102.
+                window.updateStatus("!!! PONG RECEIVED !!!");
+                window.pushLog(`!!! DATA [2102] !!! ${JSON.stringify(msg)}`, "hit");
             }
             else if (msg.payloadType === 2500) {
-                // Error
                 const txt = msg.payload || "";
-                // Ignore "Unsupported" logs if possible to reduce noise, unless unique
-                if (txt.includes("Unsupported")) {
-                    // window.pushLog("Err: 2500 Unsupported"); 
-                } else {
+                if (!txt.includes("Unsupported")) {
                     window.pushLog(`Err [2500]: ${txt}`, "try");
                 }
             }
@@ -154,7 +202,7 @@
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v35: Tunnel Fuzzer");
+            window.pushLog("Inspector v36: Payload Structure");
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
@@ -165,7 +213,7 @@
     <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v35: Finding the Wrapper
+        Inspector v36: Ping (No Auth)
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
