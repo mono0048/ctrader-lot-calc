@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v5.2</title>
+    <title>Auto Lot Calc v6.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -92,13 +92,15 @@
         }
 
         #log {
-            display: none;
+            display: block;
             font-size: 10px;
-            color: #888;
+            color: #666;
             white-space: pre-wrap;
             margin-top: 20px;
             border-top: 1px solid #333;
             padding-top: 10px;
+            height: 150px;
+            overflow-y: auto;
         }
 
         #modal {
@@ -139,7 +141,7 @@
         const App = {
             account: "---",
             balance: 0,
-            currency: "USD",
+            currency: "???", // Default to ??? to force check
             allSymbols: [],
             symbol: null,
             price: 0,
@@ -192,11 +194,16 @@
                 document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
                 Tunnel.send(175, {}, res => {
+                    // DEBUG: Log Account to find Currency
+                    UI.log("AccRes: " + JSON.stringify(res));
+
                     const t = P(res, "trader");
                     if (t) {
                         App.account = P(t, "login");
                         App.balance = (P(t, "balance") || 0) / 100;
                         App.currency = P(res, "depositCurrency") || "USD";
+
+                        // Force JPY override if name suggests?
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
@@ -221,13 +228,11 @@
                         App.symbol = l[0];
                         App.symbol.id = id;
 
-                        // --- DYNAMIC DATA EXTRACTION ---
-                        // Try to find units
-                        App.symbol._step = P(App.symbol, "stepVolume") || 1000;
-                        if (App.symbol._step > 10000) App.symbol._step /= 100;
+                        // --- DYNAMIC DATA v6.0 ---
+                        const stepCents = P(App.symbol, "stepVolume") || 100000;
+                        App.symbol._step = stepCents; // Keep in Cents for calculation logic
 
-                        // Log for debugging Watchlist/Calc
-                        UI.log("SymDetails: " + JSON.stringify(App.symbol));
+                        UI.log(`Sel: ${P(App.symbol, "name")} Fav:${P(App.symbol, "favorite")} Lot:${P(App.symbol, "lotSize")}`);
 
                         Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
@@ -255,75 +260,57 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                // --- DYNAMIC PIP VALUE V5.2 ---
-                // 1. Get Pip Size (e.g. 0.01 or 0.0001)
-                // Digits = 3 (JPY) -> 0.001? No, Pips usually 2nd or 4th decimal.
-                // PipPosition? usually sent.
-                // If missing, guess: JPY=0.01, Others=0.0001
-                let pipSize = 0.0001;
-                const name = P(App.symbol, "name").toUpperCase();
-                if (name.includes("JPY")) pipSize = 0.01;
+                // --- FULLY DYNAMIC PIP VALUE ---
+                const lotCents = P(App.symbol, "lotSize") || 10000000; // 100k units * 100
+                const lotUnits = lotCents / 100;
 
-                // 2. Get Lot Size (Units)
-                // cTrader Default 100,000. Can be in details? "measurementUnits"?
-                // If missing, assume 100,000. (Standard)
-                const lotSize = 100000;
+                const digits = P(App.symbol, "digits");
+                const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
+                const pipSize = Math.pow(10, -pipPos); // e.g. 10^-2 = 0.01
 
-                // 3. Pip Value in QUOTE Currency (per Lot)
-                // Val = LotSize * PipSize
-                // e.g. USDJPY: 100,000 * 0.01 = 1000 JPY
-                // e.g. EURUSD: 100,000 * 0.0001 = 10 USD
-                let pipValQuote = lotSize * pipSize;
+                // Value per Lot in QUOTE Currency
+                const pipValQuote = lotUnits * pipSize;
 
-                // 4. Convert Quote Currency to Account Currency
-                // We need to know Quote Currency. 
-                // e.g. USDJPY -> Quote=JPY. EURUSD -> Quote=USD.
-                // If Quote == AccountCurrency -> No conversion.
-                // If Account=JPY:
-                //   - USDJPY (Quote=JPY) -> Val=1000. (Correct)
-                //   - EURUSD (Quote=USD) -> Val=10 USD. Need USD->JPY rate.
-                //     Rate is ... wait. We don't have EURUSD price if we are trading USDJPY.
-                //     BUT usually we trade the pair we are looking at.
+                // Convert to Account Currency
+                const sym = P(App.symbol, "name").toUpperCase();
+                const acc = App.currency.toUpperCase();
 
-                // SIMPLIFICATION for V5.2:
-                // Calculate in Account Currency directly if possible.
+                let finalPipVal = 10; // Default fallback
 
-                let finalPipVal = 10; // Fallback
+                // Logic:
+                // 1. If Account matches Quote (e.g. Acc=JPY, Pair=USDJPY) -> No Conv (pipValQuote)
+                // 2. If Account matches Base (e.g. Acc=USD, Pair=USDJPY) -> pipValQuote / Price
+                // 3. If Account is neither (e.g. Acc=USD, Pair=EURJPY) -> pipValQuote (JPY) * JPYUSD_Rate.
 
-                if (App.currency === "JPY") {
-                    if (name.endsWith("JPY")) {
-                        finalPipVal = 1000; // 100,000 * 0.01
-                    } else if (name.endsWith("USD")) {
-                        // Quote is USD. Acc is JPY. Need USDJPY rate.
-                        // We don't have it unless we subscribe to USDJPY separate.
-                        // Fallback: Use Fixed 100? or 150? (Dangerous)
-                        // Let's assume most users trade JPY pairs or MajorUSD.
-                        // If we are looking at EURUSD, price is 1.05. 
-                        // WE DO NOT KNOW USDJPY RATE.
-                        finalPipVal = 1500; // Approx 10 USD * 150
-                    }
-                } else if (App.currency === "USD") {
-                    if (name.endsWith("USD")) {
-                        finalPipVal = 10;
-                    } else if (name.endsWith("JPY")) {
-                        // Quote JPY. Acc USD.
-                        // Val = 1000 JPY. Convert to USD.
-                        // 1000 / USDJPY_Price.
-                        // If we are trading USDJPY, we DO have the price!
-                        finalPipVal = 1000 / App.price;
-                    }
+                // Detection:
+                if (sym.endsWith(acc)) {
+                    // Quote is Account
+                    finalPipVal = pipValQuote;
+                } else if (sym.startsWith(acc)) {
+                    // Base is Account. (e.g. USDJPY, Acc=USD). Quote is JPY.
+                    // We have pipVal in JPY. We need USD. 
+                    // 1 USD = Price JPY. -> 1 JPY = 1/Price USD.
+                    finalPipVal = pipValQuote / App.price;
+                } else {
+                    // Cross. Hard/Imprecise without rate.
+                    // e.g. EURUSD on JPY Account.
+                    // Quote is USD. We need JPY.
+                    // Scan for "USDJPY" rate? Or assume fixed?
+                    // For this version, fallback to 1000 if JPY, 10 if USD.
+                    finalPipVal = (acc === "JPY") ? 1000 : 10;
                 }
 
-                // --- CALC ---
+                // Calculate
                 const lots = riskAmt / (sl * finalPipVal);
 
-                // Normalize
-                let units = lots * 100000;
-                const step = App.symbol._step || 1000;
-                units = Math.floor(units / step) * step;
+                // Normalize to Step (Cents)
+                let unitsCents = lots * lotCents; // Target Cents
+                const stepCents = App.symbol._step || 100000;
 
-                App.volCents = units * 100;
-                App.volLots = units / 100000;
+                unitsCents = Math.floor(unitsCents / stepCents) * stepCents;
+
+                App.volCents = unitsCents;
+                App.volLots = unitsCents / lotCents; // Display Lots matches LotSize
 
                 UI.updateCalc(riskAmt, finalPipVal);
             },
@@ -359,9 +346,7 @@
                 s.innerHTML = "";
                 const term = (txt || "").toUpperCase();
 
-                // Watchlist Logic Placeholders?
-                // Checking if symbol has 'groupName' or similar
-
+                // Future: filter by favorites if we can map IDs
                 const matches = App.allSymbols.filter(x => P(x, "name").toUpperCase().includes(term));
 
                 matches.slice(0, 50).forEach(i => {
@@ -390,8 +375,7 @@
             },
             log: (t) => {
                 const l = document.getElementById('log');
-                l.style.display = 'block';
-                l.textContent = t + "\n" + l.textContent.substring(0, 500);
+                l.textContent = t + "\n" + l.textContent.substring(0, 2000);
             }
         };
 
@@ -402,7 +386,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v5.2</div>
+                style="color:#fff">CALC</span> v6.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -450,7 +434,7 @@
         <button id="btn_trade" class="trade" disabled>Place Order</button>
     </div>
 
-    <div id="log"></div>
+    <div id="log">Debug Info...</div>
     <div id="modal">
         <div class="modal-content"></div>
     </div>
