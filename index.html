@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Stack Tracer</title>
+    <title>ALC Argument Fuzzer</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #fff;
+            background: #101;
+            color: #f0a;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #fff;
+            border: 2px solid #f0a;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,20 +24,15 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid #404;
             padding: 4px;
             word-break: break-all;
+            color: #fab;
         }
 
-        .trace {
-            color: #aaa;
-            font-size: 9px;
-            white-space: pre-wrap;
-        }
-
-        .hl {
-            color: #ff0;
-            font-weight: bold;
+        .succ {
+            color: #0f0;
+            background: #002;
         }
     </style>
 
@@ -52,7 +47,7 @@
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.innerHTML = line;
+                div.textContent = line;
                 el.insertBefore(div, el.firstChild);
             }
         };
@@ -62,53 +57,90 @@
             if (el) el.textContent = msg;
         };
 
-        // --- DISPATCH HOOK ---
-        const originalDispatch = window.dispatchEvent;
+        // --- ARITY FUZZER ---
+        window.fuzzArguments = (msgId) => {
+            const bridge = window.EventBasedPluginJavaScriptBridge;
+            if (!bridge || !bridge.handlePluginEvent) return;
 
-        window.dispatchEvent = function (event) {
-            // Check if it's our target event
-            if (event.type === 'message-from-host' || event.type === 'message') {
+            window.updateStatus("FUZZING ARGUMENTS...");
 
-                let payloadType = "???";
-                if (event.data && event.data.payloadType) payloadType = event.data.payloadType;
-                if (event.detail && event.detail.payloadType) payloadType = event.detail.payloadType;
+            const payloadObj = {
+                payloadType: 2001,
+                clientMsgId: msgId,
+                payload: {}
+            };
+            const json = JSON.stringify(payloadObj);
 
-                window.pushLog(`TRAP: dispatchEvent('${event.type}') [Type:${payloadType}]`, "hl");
+            // 1. STANDARD (1 arg) - We know this "works" (no error) but maybe ignored
+            // Included for baseline
+            try { bridge.handlePluginEvent(json); window.pushLog("Sent(1): json"); } catch (e) { }
 
-                // CAPTURE STACK
-                try {
-                    throw new Error("Stack Trace Capture");
-                } catch (e) {
-                    // Filter stack to remove "dispatchEvent" itself
-                    const stack = e.stack.split('\n').slice(1).join('\n');
-                    window.pushLog(`<div class="trace">${stack}</div>`);
+            // 2. SPLIT ARGS (2 args)
+            // handlePluginEvent(type, json)
+            try {
+                bridge.handlePluginEvent(2001, json);
+                window.pushLog("Sent(2): 2001, json");
+            } catch (e) { window.pushLog("Err(2A): " + e.message); }
+
+            try {
+                bridge.handlePluginEvent("2001", json);
+                window.pushLog("Sent(2): '2001', json");
+            } catch (e) { window.pushLog("Err(2B): " + e.message); }
+
+            // 3. SPLIT ARGS (3 args)
+            // handlePluginEvent(type, id, json)
+            try {
+                bridge.handlePluginEvent(2001, msgId, json);
+                window.pushLog("Sent(3): 2001, id, json");
+            } catch (e) { window.pushLog("Err(3): " + e.message); }
+
+            // 4. OLD WEBVIEW STYLE (prompt)
+            // Sometimes bridges use prompt() intercept
+            try {
+                const res = prompt(json, "gap-iab:");
+                if (res) window.pushLog("PROMPT Return: " + res, "succ");
+            } catch (e) { }
+        };
+
+        // --- ID STRATEGY ---
+        window.processedIds = new Set();
+
+        // --- HANDLER ---
+        window.onHostMessage = (msg) => {
+            if (!msg) return;
+
+            if (msg.payloadType === 2000) {
+                // ONLY PROCESS NEW IDs to avoid infinite loops if we fail
+                if (window.processedIds.has(msg.clientMsgId)) {
+                    return;
                 }
-            }
+                window.processedIds.add(msg.clientMsgId);
 
-            // Pass through
-            return originalDispatch.apply(window, arguments);
+                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
+
+                // Fuzz args
+                window.fuzzArguments(msg.clientMsgId);
+            }
+            else if (msg.payloadType === 2101 || msg.payloadType === 2102 || msg.payloadType === 2500) {
+                window.updateStatus("!!! SUCCESS !!!");
+                window.pushLog(`!!! HIT !!! RECV ${msg.payloadType}`, "succ");
+            }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v24: Stack Tracer Ready");
-
-            // Add listener just to confirm receipt
-            window.addEventListener('message-from-host', (e) => {
-                if (e.data?.payloadType === 2000) {
-                    window.updateStatus("2000 CAPTURED! CHECK STACK!");
-                }
-            });
+            window.pushLog("Inspector v25: Argument Fuzzer");
+            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
         };
 
     </script>
 </head>
 
 <body>
-    <div id="status" class="status">WAITING FOR EVENT...</div>
+    <div id="status" class="status">WAITING 2000...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v24: Reverse Engineering the Downlink
+        Inspector v25: Multi-Arg & Prompt Test
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
@@ -121,7 +153,7 @@
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
                         d.className = "log " + (l.c || "");
-                        d.innerHTML = l.t;
+                        d.textContent = l.t;
                         el.appendChild(d);
                     });
                 }
