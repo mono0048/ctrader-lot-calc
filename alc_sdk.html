@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Android Deep Scan</title>
+    <title>ALC WebView Scan</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #111;
-            color: #ddd;
+            background: #000;
+            color: #0f0;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 1px solid #444;
+            border: 1px solid #0f0;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,15 +24,10 @@
 
         .log {
             font-size: 10px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid #330033;
             padding: 2px;
             word-break: break-all;
-        }
-
-        h2 {
-            font-size: 14px;
-            margin: 5px 0;
-            color: #aaf;
+            color: #ccc;
         }
     </style>
 
@@ -52,95 +47,98 @@
             }
         };
 
-        window.updateStatus = (msg, color) => {
+        window.updateStatus = (msg) => {
             const el = document.getElementById('status');
-            if (el) {
-                el.textContent = msg;
-                if (color) el.style.color = color;
-                if (color) el.style.borderColor = color;
-            }
+            if (el) el.textContent = msg;
         };
 
-        // --- INSPECTOR ---
-        window.inspectAndroid = () => {
-            const android = window.android;
-            if (!android) {
-                window.pushLog("CRITICAL: window.android NOT FOUND");
+        // --- INSPECTION ---
+        window.inspectWebview = () => {
+            window.pushLog("--- INSPECTING window.android.webview ---");
+
+            if (!window.android || !window.android.webview) {
+                window.pushLog("CRITICAL: window.android.webview NOT FOUND");
                 return;
             }
 
-            window.pushLog("--- INSPECTING window.android ---");
+            const wv = window.android.webview;
 
             // 1. Direct Keys
             try {
                 const keys = [];
-                for (let k in android) keys.push(k);
+                for (let k in wv) keys.push(k);
                 window.pushLog(`KEYS: ${keys.join(', ') || 'NONE'}`);
             } catch (e) { window.pushLog("Keys Err: " + e.message); }
 
-            // 2. Prototype properties (often hidden)
+            // 2. Proto Keys
             try {
-                const proto = Object.getPrototypeOf(android);
+                const proto = Object.getPrototypeOf(wv);
                 if (proto) {
                     const pKeys = Object.getOwnPropertyNames(proto);
                     window.pushLog(`PROTO KEYS: ${pKeys.join(', ') || 'NONE'}`);
 
-                    // Check descriptors
+                    // Check types
                     pKeys.forEach(k => {
                         try {
-                            const val = android[k];
-                            window.pushLog(`  > ${k}: ${typeof val}`);
+                            window.pushLog(`  > ${k}: ${typeof wv[k]}`);
                         } catch (e) { }
                     });
-                } else {
-                    window.pushLog("PROTO: null");
                 }
             } catch (e) { window.pushLog("Proto Err: " + e.message); }
 
-            window.pushLog("--------------------------------");
+            window.pushLog("---------------------------------------");
+        };
+
+        // --- SPRAYER (Webview Edition) ---
+        window.sprayWebview = (msgId) => {
+            window.updateStatus("SPRAYING window.android.webview...");
+            const wv = window.android?.webview;
+            if (!wv) return;
+
+            const payload = {
+                payloadType: 2001,
+                clientMsgId: msgId,
+                payload: {}
+            };
+            const strPayload = JSON.stringify(payload);
+
+            // Potential method names
+            const candidates = ['postMessage', 'sendMessage', 'send', 'onMessage', 'dispatch'];
+
+            candidates.forEach(m => {
+                if (typeof wv[m] === 'function') {
+                    try {
+                        wv[m](strPayload);
+                        window.pushLog(`>> SENT wv.${m}(Str)`);
+                    } catch (e) { }
+                    try {
+                        wv[m](payload);
+                        window.pushLog(`>> SENT wv.${m}(Obj)`);
+                    } catch (e) { }
+                }
+            });
         };
 
         // --- HANDLER ---
         window.onHostMessage = (msg) => {
             if (!msg) return;
-            const type = msg.payloadType;
 
-            // FILTER ECHOES
-            if (type === 2001 || type === 2100) {
-                // window.pushLog(`(Ignoring Echo: ${type})`);
-                return;
-            }
-
-            // 2000
-            if (type === 2000) {
+            if (msg.payloadType === 2000) {
                 window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
-                window.updateStatus("HANDSHAKE RECV. CHECK LOGS.", "yellow");
-
-                // Try sending 2001 via detected methods? 
-                // Better to just wait for user to see logs first.
-                // But let's try 'postMessage' if it exists on android object
-                if (window.android && typeof window.android.postMessage === 'function') {
-                    window.pushLog("Trying android.postMessage...");
-                    try {
-                        const reply = JSON.stringify({
-                            payloadType: 2001,
-                            clientMsgId: msg.clientMsgId,
-                            payload: {}
-                        });
-                        window.android.postMessage(reply);
-                        window.pushLog(">> SENT android.postMessage");
-                    } catch (e) { window.pushLog("Err: " + e.message); }
-                }
+                window.inspectWebview();
+                window.sprayWebview(msg.clientMsgId);
             }
-            else if (type === 2101 || type === 2102 || type === 2500) {
-                window.updateStatus("SUCCESS! REAL DATA", "#0f0");
-                window.pushLog(`<< DATA ${type}: ` + JSON.stringify(msg));
+            else if (msg.payloadType === 2101 || msg.payloadType === 2500) {
+                window.updateStatus("CONNECTED! RECV DATA!");
+                window.pushLog(`!!! SUCCESS !!! data: ${JSON.stringify(msg)}`);
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.inspectAndroid();
+            window.pushLog("Inspector v18 Ready.");
+            window.inspectWebview(); // Run once at start too
+
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
             window.addEventListener('message', (e) => {
                 if (e.data && e.data.payloadType) window.onHostMessage(e.data);
@@ -151,14 +149,11 @@
 </head>
 
 <body>
-    <div id="status" class="status">INSPECTING...</div>
+    <div id="status" class="status">WAITING FOR 2000...</div>
 
-    <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v17: Android & Noise Filter
+    <p style="font-size:12px; text-align:center; color:#555;">
+        Inspector v18: Sub-Bridge Scan
     </p>
-
-    <button onclick="window.inspectAndroid()" style="background:#444; color:white;">RE-SCAN ANDROID</button>
-    <button onclick="location.reload()" style="background:#555; color:white;">RELOAD</button>
 
     <div id="logs" style="margin-top:10px;"></div>
 
@@ -166,7 +161,7 @@
         setTimeout(() => {
             if (window.logBuffer.length > 0) {
                 const el = document.getElementById('logs');
-                if (el && el.innerHTML === "") { // Only if empty
+                if (el && el.innerHTML === "") {
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
                         d.className = "log";
