@@ -3,19 +3,19 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Bridge Surgeon</title>
+    <title>ALC Protocol Diagnostics</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #222;
-            color: #ffeb3b;
+            background: #000;
+            color: #0ff;
             font-family: monospace;
             padding: 10px;
         }
 
         .status {
             padding: 10px;
-            border: 2px solid #ffeb3b;
+            border: 2px solid #0ff;
             margin-bottom: 10px;
             font-weight: bold;
             font-size: 16px;
@@ -24,18 +24,15 @@
 
         .log {
             font-size: 11px;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid #004444;
             padding: 4px;
             word-break: break-all;
-            color: #fff;
+            color: #eee;
         }
 
-        .err {
-            color: #ff5555;
-        }
-
-        .succ {
-            color: #55ff55;
+        .hl {
+            color: #ffff00;
+            font-weight: bold;
         }
     </style>
 
@@ -50,7 +47,7 @@
             if (el) {
                 const div = document.createElement('div');
                 div.className = "log " + (type || "");
-                div.textContent = line;
+                div.innerHTML = line; // Allow HTML for highlight
                 el.insertBefore(div, el.firstChild);
             }
         };
@@ -60,115 +57,90 @@
             if (el) el.textContent = msg;
         };
 
-        // --- SURGEON ---
-        window.operateOnBridge = () => {
+        // --- GLOBAL TRAP ---
+        // Define potential callbacks the host might try to call
+        window.onPluginEvent = (data) => window.pushLog("TRAP: window.onPluginEvent called!", "hl");
+        window.handlePluginEvent = (data) => window.pushLog("TRAP: window.handlePluginEvent called!", "hl");
+        window.receiveMessage = (data) => window.pushLog("TRAP: window.receiveMessage called!", "hl");
+        window.callback = (data) => window.pushLog("TRAP: window.callback called!", "hl");
+
+        // --- INJECTOR ---
+        window.tryInject = (msgId) => {
             const bridge = window.EventBasedPluginJavaScriptBridge;
+            if (!bridge) return;
 
-            if (!bridge) {
-                window.pushLog("CRITICAL: EventBasedPluginJavaScriptBridge NOT FOUND", "err");
-                // Fallback scan
-                for (let k in window) {
-                    if (k.toLowerCase().includes("bridge") || k.toLowerCase().includes("plugin")) {
-                        window.pushLog(`Found alternative global: ${k}`, "succ");
-                    }
-                }
-                return;
-            }
+            window.updateStatus("SENDING 2001 (Mix Mode)...");
 
-            window.pushLog("BRIDGE FOUND. Starting analysis...", "succ");
-
-            // 1. Prototype Chain & Descriptors
-            try {
-                const props = Object.getOwnPropertyNames(bridge);
-                window.pushLog(`OWN PROPS: ${props.join(', ') || 'none'}`);
-
-                const proto = Object.getPrototypeOf(bridge);
-                if (proto) {
-                    const pProps = Object.getOwnPropertyNames(proto);
-                    window.pushLog(`PROTO PROPS: ${pProps.join(', ') || 'none'}`);
-                }
-            } catch (e) { window.pushLog("Analysis Err: " + e.message, "err"); }
-
-            // 2. Type Check
-            try {
-                if (bridge.handlePluginEvent) {
-                    window.pushLog(`handlePluginEvent is: ${typeof bridge.handlePluginEvent}`);
-                    window.pushLog(`handlePluginEvent.length: ${bridge.handlePluginEvent.length}`); // Arg count
-                }
-            } catch (e) { }
-        };
-
-        // --- INJECTION ---
-        window.injectResponse = (msgId) => {
-            const bridge = window.EventBasedPluginJavaScriptBridge;
-            if (!bridge || !bridge.handlePluginEvent) return;
-
-            window.updateStatus("INJECTING RESPONSES...");
-
-            const payloadObj = {
+            const payload = {
                 payloadType: 2001,
                 clientMsgId: msgId,
                 payload: {}
             };
-            const payloadStr = JSON.stringify(payloadObj);
 
-            // ATTEMPT 1: String
-            try {
-                const ret = bridge.handlePluginEvent(payloadStr);
-                window.pushLog(`Sent(String) -> Returned: ${ret}`, "succ");
-            } catch (e) { window.pushLog(`Sent(String) failed: ${e.message}`, "err"); }
+            // 1. Normal Object
+            try { bridge.handlePluginEvent(payload); } catch (e) { }
 
-            // ATTEMPT 2: Object
-            try {
-                const ret = bridge.handlePluginEvent(payloadObj);
-                window.pushLog(`Sent(Object) -> Returned: ${ret}`, "succ");
-            } catch (e) { window.pushLog(`Sent(Object) failed: ${e.message}`, "err"); }
+            // 2. Normal JSON
+            try { bridge.handlePluginEvent(JSON.stringify(payload)); } catch (e) { }
 
-            // ATTEMPT 3: Wrapper
+            // 3. Double JSON (Sometimes required for nested parsing)
             try {
-                const wrapper = { type: 'message-to-host', payload: payloadObj };
-                const ret = bridge.handlePluginEvent(JSON.stringify(wrapper));
-                window.pushLog(`Sent(Wrapper) -> Returned: ${ret}`, "succ");
+                bridge.handlePluginEvent(JSON.stringify(JSON.stringify(payload)));
+                window.pushLog("Sent Double-JSON", "hl");
             } catch (e) { }
         };
 
         // --- HANDLER ---
-        window.onHostMessage = (msg) => {
-            if (!msg) return;
+        window.handleIncoming = (source, data) => {
+            if (!data) return;
+
+            // If string, try parse
+            let msg = data;
+            if (typeof data === 'string') {
+                try { msg = JSON.parse(data); } catch (e) { }
+            }
 
             if (msg.payloadType === 2000) {
-                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`, "succ");
-                window.operateOnBridge(); // Analyze right at the moment of truth
+                window.pushLog(`<< RECV 2000 from ${source}`, "hl");
+                // FULL DUMP of 2000
+                window.pushLog(`2000 CONTENT: ${JSON.stringify(msg)}`);
 
-                setTimeout(() => {
-                    window.injectResponse(msg.clientMsgId);
-                }, 100);
+                // Auto-respond
+                setTimeout(() => window.tryInject(msg.clientMsgId), 100);
             }
-            else if (msg.payloadType === 2101 || msg.payloadType === 2500) {
-                window.updateStatus("CONNECTED! DATA RECEIVED!");
-                window.pushLog(`!!! DATA !!!: ${JSON.stringify(msg)}`, "succ");
+            else if (msg.payloadType === 2101 || msg.payloadType === 2500 || msg.payloadType === 2102) {
+                window.updateStatus("CONNECTED! DATA RECV!");
+                window.pushLog(`SUCCESS: ${JSON.stringify(msg)}`, "hl");
+            }
+            else {
+                // Log unknown only if object
+                if (typeof msg === 'object') {
+                    // window.pushLog(`Unknown: ${JSON.stringify(msg)}`);
+                }
             }
         };
 
         // --- SETUP ---
         window.onload = () => {
-            window.pushLog("Inspector v19: Bridge Surgeon");
-            window.operateOnBridge();
+            window.pushLog("Inspector v20: Full Diagnostics");
 
-            window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
-            window.addEventListener('message', (e) => {
-                if (e.data && e.data.payloadType) window.onHostMessage(e.data);
-            });
+            // Listen on WINDOW
+            window.addEventListener('message-from-host', (e) => window.handleIncoming('win:msg-host', e.data));
+            window.addEventListener('message', (e) => window.handleIncoming('win:message', e.data));
+
+            // Listen on DOCUMENT (Just in case)
+            document.addEventListener('message-from-host', (e) => window.handleIncoming('doc:msg-host', e.detail || e.data));
+            document.addEventListener('plugin-message', (e) => window.handleIncoming('doc:plugin-msg', e.detail || e.data));
         };
 
     </script>
 </head>
 
 <body>
-    <div id="status" class="status">WAITING FOR HANDSHAKE...</div>
+    <div id="status" class="status">WAITING 2000...</div>
 
-    <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v19: EventBasedPluginJavaScriptBridge Analysis
+    <p style="font-size:12px; text-align:center; color:#555;">
+        Inspector v20: Dump & Trap
     </p>
 
     <div id="logs" style="margin-top:10px;"></div>
@@ -181,7 +153,7 @@
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
                         d.className = "log " + (l.c || "");
-                        d.textContent = l.t;
+                        d.innerHTML = l.t;
                         el.appendChild(d);
                     });
                 }
