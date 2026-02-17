@@ -3,12 +3,12 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>ALC Protocol Spray</title>
+    <title>ALC Android Deep Scan</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
-            background: #000;
-            color: #fff;
+            background: #111;
+            color: #ddd;
             font-family: monospace;
             padding: 10px;
         }
@@ -28,6 +28,12 @@
             padding: 2px;
             word-break: break-all;
         }
+
+        h2 {
+            font-size: 14px;
+            margin: 5px 0;
+            color: #aaf;
+        }
     </style>
 
     <script>
@@ -46,148 +52,95 @@
             }
         };
 
-        window.updateStatus = (msg, className) => {
+        window.updateStatus = (msg, color) => {
             const el = document.getElementById('status');
             if (el) {
                 el.textContent = msg;
-                if (className) el.className = "status " + className;
+                if (color) el.style.color = color;
+                if (color) el.style.borderColor = color;
             }
         };
 
-        // --- STATE ---
-        window.lastMsgId = null;
-        window.hasHandshook = false;
-        window.sprayCount = 0;
-
-        // --- SPRAYER ---
-        window.sprayResponse = (basePayload) => {
-            window.pushLog("!!! STARTING SPRAY !!!");
-            const bridge = window.EventBasedPluginJavaScriptBridge;
+        // --- INSPECTOR ---
+        window.inspectAndroid = () => {
             const android = window.android;
-
-            // 1. Bridge Handle (Object)
-            if (bridge && bridge.handlePluginEvent) {
-                try {
-                    bridge.handlePluginEvent(basePayload);
-                    window.pushLog(">> STAY [1] Bridge.handle(Obj)");
-                } catch (e) { window.pushLog("ERR [1]: " + e.message); }
-
-                // 2. Bridge Handle (String)
-                try {
-                    bridge.handlePluginEvent(JSON.stringify(basePayload));
-                    window.pushLog(">> STAY [2] Bridge.handle(Str)");
-                } catch (e) { window.pushLog("ERR [2]: " + e.message); }
+            if (!android) {
+                window.pushLog("CRITICAL: window.android NOT FOUND");
+                return;
             }
 
-            // 3. Android Interface (if exists)
-            if (android) {
-                window.pushLog(">> STAT [3] Found 'window.android'");
-                // Try common methods
-                const methods = ['handlePluginEvent', 'send', 'postMessage', 'receive'];
-                methods.forEach(m => {
-                    if (typeof android[m] === 'function') {
+            window.pushLog("--- INSPECTING window.android ---");
+
+            // 1. Direct Keys
+            try {
+                const keys = [];
+                for (let k in android) keys.push(k);
+                window.pushLog(`KEYS: ${keys.join(', ') || 'NONE'}`);
+            } catch (e) { window.pushLog("Keys Err: " + e.message); }
+
+            // 2. Prototype properties (often hidden)
+            try {
+                const proto = Object.getPrototypeOf(android);
+                if (proto) {
+                    const pKeys = Object.getOwnPropertyNames(proto);
+                    window.pushLog(`PROTO KEYS: ${pKeys.join(', ') || 'NONE'}`);
+
+                    // Check descriptors
+                    pKeys.forEach(k => {
                         try {
-                            android[m](JSON.stringify(basePayload));
-                            window.pushLog(`>> STAY [3a] android.${m}(Str)`);
+                            const val = android[k];
+                            window.pushLog(`  > ${k}: ${typeof val}`);
                         } catch (e) { }
-                        try {
-                            android[m](basePayload);
-                            window.pushLog(`>> STAY [3b] android.${m}(Obj)`);
-                        } catch (e) { }
-                    }
-                });
-            }
+                    });
+                } else {
+                    window.pushLog("PROTO: null");
+                }
+            } catch (e) { window.pushLog("Proto Err: " + e.message); }
 
-            // 4. Dispatch Event (MessageEvent)
-            try {
-                window.dispatchEvent(new MessageEvent('message-to-host', { data: basePayload }));
-                window.pushLog(">> STAY [4] dispatch(MessageEvent)");
-            } catch (e) { window.pushLog("ERR [4]: " + e.message); }
-
-            // 5. Dispatch Event (CustomEvent)
-            try {
-                window.dispatchEvent(new CustomEvent('message-to-host', { detail: basePayload }));
-                window.pushLog(">> STAY [5] dispatch(CustomEvent)");
-            } catch (e) { window.pushLog("ERR [5]: " + e.message); }
-
-            // 6. Parent PostMessage (Sample Code)
-            try {
-                window.parent.postMessage(basePayload, "*");
-                window.pushLog(">> STAY [6] parent.postMessage(Obj)");
-            } catch (e) { window.pushLog("ERR [6]: " + e.message); }
-
-            // 7. Window PostMessage
-            try {
-                window.postMessage(basePayload, "*");
-                window.pushLog(">> STAY [7] window.postMessage(Obj)");
-            } catch (e) { }
-
-            window.pushLog("!!! SPRAY COMPLETE !!!");
+            window.pushLog("--------------------------------");
         };
 
-        // --- LOGIC ---
+        // --- HANDLER ---
         window.onHostMessage = (msg) => {
             if (!msg) return;
             const type = msg.payloadType;
 
-            // 2000 -> SPRAY 2001
+            // FILTER ECHOES
+            if (type === 2001 || type === 2100) {
+                // window.pushLog(`(Ignoring Echo: ${type})`);
+                return;
+            }
+
+            // 2000
             if (type === 2000) {
-                if (window.hasHandshook) {
-                    window.pushLog("Ignored Dup 2000");
-                    return;
+                window.pushLog(`<< RECV 2000 (ID: ${msg.clientMsgId})`);
+                window.updateStatus("HANDSHAKE RECV. CHECK LOGS.", "yellow");
+
+                // Try sending 2001 via detected methods? 
+                // Better to just wait for user to see logs first.
+                // But let's try 'postMessage' if it exists on android object
+                if (window.android && typeof window.android.postMessage === 'function') {
+                    window.pushLog("Trying android.postMessage...");
+                    try {
+                        const reply = JSON.stringify({
+                            payloadType: 2001,
+                            clientMsgId: msg.clientMsgId,
+                            payload: {}
+                        });
+                        window.android.postMessage(reply);
+                        window.pushLog(">> SENT android.postMessage");
+                    } catch (e) { window.pushLog("Err: " + e.message); }
                 }
-                window.hasHandshook = true;
-                window.lastMsgId = msg.clientMsgId;
-                window.pushLog(`<< RECV 2000 (ID: ${window.lastMsgId})`);
-                window.updateStatus("HANDSHAKE RECEIVED! SPRAYING...", "pending");
-
-                // PREPARE CONFIRM PAYLOAD
-                const confirmPayload = {
-                    payloadType: 2001,
-                    clientMsgId: window.lastMsgId, // Echo
-                    payload: {}
-                };
-
-                setTimeout(() => {
-                    window.sprayResponse(confirmPayload);
-                    window.updateStatus("SPRAYED. WAITING FOR DATA...", "pending");
-
-                    // AUTO AUTH SPRAY (After 1s)
-                    setTimeout(window.doAuthSpray, 1000);
-                }, 50);
             }
-            else if (type === 2101 || type === 2102 || type === 2100) {
-                window.updateStatus("CONNECTED! DATA RECV", "success");
-                window.pushLog(`<< DATA ${type}: ` + JSON.stringify(msg).substring(0, 50));
+            else if (type === 2101 || type === 2102 || type === 2500) {
+                window.updateStatus("SUCCESS! REAL DATA", "#0f0");
+                window.pushLog(`<< DATA ${type}: ` + JSON.stringify(msg));
             }
-            else {
-                window.pushLog(`<< RECV UNKNOWN ${type}`);
-            }
-        };
-
-        window.doAuthSpray = () => {
-            const reqId = "auth-" + Date.now();
-            const authPayload = {
-                payloadType: 2100,
-                clientMsgId: reqId,
-                payload: {
-                    payloadType: 175,
-                    clientMsgId: reqId
-                }
-            };
-            window.pushLog(">> SPRAYING AUTH (2100)...");
-            window.sprayResponse(authPayload);
         };
 
         // --- SETUP ---
         window.onload = () => {
-            // Inspect Android
-            if (window.android) {
-                window.pushLog("FOUND WINDOW.ANDROID keys: " + Object.keys(window.android).join(', '));
-            } else {
-                window.pushLog("window.android NOT FOUND");
-            }
-
+            window.inspectAndroid();
             window.addEventListener('message-from-host', (e) => window.onHostMessage(e.data));
             window.addEventListener('message', (e) => {
                 if (e.data && e.data.payloadType) window.onHostMessage(e.data);
@@ -198,22 +151,22 @@
 </head>
 
 <body>
-    <div id="status" class="status">WAITING FOR host (2000)...</div>
+    <div id="status" class="status">INSPECTING...</div>
 
     <p style="font-size:12px; text-align:center; color:#aaa;">
-        Inspector v16: Protocol Spray
+        Inspector v17: Android & Noise Filter
     </p>
 
-    <button onclick="window.doAuthSpray()" style="background:#004488; color:white;">FORCE AUTH SPRAY</button>
+    <button onclick="window.inspectAndroid()" style="background:#444; color:white;">RE-SCAN ANDROID</button>
+    <button onclick="location.reload()" style="background:#555; color:white;">RELOAD</button>
 
     <div id="logs" style="margin-top:10px;"></div>
 
     <script>
-        // Late log flush
         setTimeout(() => {
             if (window.logBuffer.length > 0) {
                 const el = document.getElementById('logs');
-                if (el && el.innerHTML === "") {
+                if (el && el.innerHTML === "") { // Only if empty
                     window.logBuffer.forEach(l => {
                         const d = document.createElement('div');
                         d.className = "log";
