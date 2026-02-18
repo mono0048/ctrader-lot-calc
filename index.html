@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v9.1</title>
+    <title>Auto Lot Calc v10.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -12,6 +12,8 @@
             font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 20px;
             margin: 0;
+            overflow-y: auto;
+            overscroll-behavior-y: none;
         }
 
         .card {
@@ -75,20 +77,96 @@
             background: #333;
         }
 
+        /* Trade Button */
         button.trade {
-            background: linear-gradient(135deg, #2962ff, #448aff);
             border: none;
             font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 1px;
-            box-shadow: 0 4px 15px rgba(41, 98, 255, 0.4);
             margin-top: 10px;
+            color: #fff;
+            transition: 0.3s;
+        }
+
+        button.trade.buy {
+            background: linear-gradient(135deg, #2962ff, #448aff);
+            box-shadow: 0 4px 15px rgba(41, 98, 255, 0.4);
+        }
+
+        button.trade.sell {
+            background: linear-gradient(135deg, #d50000, #ff5252);
+            box-shadow: 0 4px 15px rgba(213, 0, 0, 0.4);
         }
 
         button.trade:disabled {
             background: #333;
             color: #555;
             box-shadow: none;
+        }
+
+        /* Buy/Sell Handlers */
+        .side-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .side-btn {
+            flex: 1;
+            padding: 12px;
+            background: #333;
+            border: 2px solid transparent;
+            border-radius: 12px;
+            font-weight: bold;
+            color: #888;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .side-btn.buy.active {
+            background: rgba(41, 98, 255, 0.2);
+            color: #448aff;
+            border-color: #448aff;
+        }
+
+        .side-btn.sell.active {
+            background: rgba(213, 0, 0, 0.2);
+            color: #ff5252;
+            border-color: #ff5252;
+        }
+
+        /* Symbol Overlay */
+        #sym_overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #121212;
+            z-index: 100;
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        #sym_list {
+            flex: 1;
+            overflow-y: auto;
+            margin-top: 10px;
+            overscroll-behavior-y: contain;
+            /* Prevents swipe-to-close on list scroll */
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .sym-item {
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            color: #ccc;
+            font-size: 16px;
+        }
+
+        .sym-item:active {
+            background: #222;
         }
 
         .toggle-row {
@@ -173,6 +251,7 @@
             price: 0,
             volCents: 0,
             volLots: 0,
+            tradeSide: 1, // 1=Buy, 2=Sell
             showFavs: false
         };
 
@@ -212,7 +291,11 @@
                 });
                 ['in_risk', 'in_sl'].forEach(id => document.getElementById(id).oninput = Logic.calc);
                 document.getElementById('btn_trade').onclick = Logic.trade;
-                document.getElementById('sym_filter').oninput = (e) => UI.filterSyms(e.target.value);
+                document.getElementById('sym_search').oninput = (e) => UI.renderSyms(e.target.value);
+
+                // Side Toggles
+                document.getElementById('side_buy').onclick = () => Logic.setSide(1);
+                document.getElementById('side_sell').onclick = () => Logic.setSide(2);
             },
 
             start: () => {
@@ -225,22 +308,16 @@
                         App.account = P(t, "login");
                         const raw = P(t, "balance") || 0;
                         App.balance = raw / 100;
-
                         App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
                         if (App.assetId === 6) App.currency = "JPY";
                         if (App.assetId === 1) App.currency = "USD";
-
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
                 });
-
                 Tunnel.send(176, {}, res => {
                     const cur = P(res, "depositCurrency");
-                    if (cur) {
-                        App.currency = cur;
-                        UI.updateAcc();
-                    }
+                    if (cur) { App.currency = cur; UI.updateAcc(); }
                 });
             },
 
@@ -250,16 +327,29 @@
                     if (s) {
                         s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
                         App.allSymbols = s;
-                        if (s.length > 0 && P(s[0], "favorite")) {
-                            UI.toggleFav(true);
-                        } else {
-                            UI.filterSyms("");
-                        }
+                        // Default to first if needed, or open picker
+                        if (s.length > 0) Logic.selectSym(P(s[0], "id"), P(s[0], "name"));
+                        UI.renderSyms("");
                     }
                 });
             },
 
-            selectSym: (id) => {
+            setSide: (s) => {
+                App.tradeSide = s;
+                const isBuy = (s === 1);
+                document.getElementById('side_buy').className = isBuy ? "side-btn buy active" : "side-btn";
+                document.getElementById('side_sell').className = !isBuy ? "side-btn sell active" : "side-btn";
+
+                const btn = document.getElementById('btn_trade');
+                btn.className = isBuy ? "trade buy" : "trade sell";
+                btn.innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
+            },
+
+            selectSym: (id, name) => {
+                // Close modal if open
+                document.getElementById('sym_overlay').style.display = "none";
+                document.getElementById('sel_sym_name').innerText = name;
+
                 Tunnel.send(163, { symbolId: [id] }, res => {
                     const l = P(res, "symbol");
                     if (l && l[0]) {
@@ -268,7 +358,7 @@
 
                         let rxLot = P(App.symbol, "lotSize");
                         if (!rxLot) rxLot = 100000;
-
+                        // Unit fix logic
                         if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
                         else App.symbol._lotUnits = rxLot;
 
@@ -287,6 +377,8 @@
                 const sid = P(q, "symbolId");
                 if (App.symbol && P(App.symbol, "id") == sid) {
                     const bid = P(q, "bid");
+                    const ask = P(q, "ask");
+                    // Use Bid for Sell, Ask for Buy usually, but for approximation mid or bid is fine
                     if (bid) {
                         App.price = bid / 100000;
                         UI.updatePrice();
@@ -344,24 +436,27 @@
 
                 const cmd = {
                     symbolId: App.symbol.id,
-                    orderType: 1, tradeSide: 1, volume: App.volCents
+                    orderType: 1,
+                    tradeSide: App.tradeSide, // 1=Buy, 2=Sell
+                    volume: App.volCents
                 };
 
                 Tunnel.send(143, cmd, res => {
-                    document.getElementById('btn_trade').innerText = "PLACE ORDER";
+                    const isBuy = (App.tradeSide === 1);
+                    document.getElementById('btn_trade').innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
                     document.getElementById('btn_trade').disabled = false;
 
                     const err = P(res, "errorCode");
                     if (err) {
                         UI.showModal("ERROR", err);
-                    }
-                    else {
+                    } else {
+                        const sideStr = isBuy ? "BUY" : "SELL";
                         UI.showModal("SUCCESS",
-                            `<div style="font-size:18px; color:#fff">Ordered <b>${App.volLots.toFixed(2)}</b> Lots</div>
+                            `<div style="font-size:18px; color:#fff">Ordered <b>${sideStr} ${App.volLots.toFixed(2)}</b> Lots</div>
                          <div class="disclaimer">
-                             ⚠️ <b>Note:</b> cTrader app may display the volume incorrectly (e.g. 100x larger) in the notification/history.<br>
+                             ⚠️ <b>Note:</b> cTrader app may display the volume incorrectly (e.g. 100x larger).<br>
                              This is a known cTrader display bug.<br>
-                             The trade <b>WAS</b> executed correctly at <b>${App.volLots.toFixed(2)} Lot</b>.
+                             The trade <b>WAS</b> executed correctly.
                          </div>`
                         );
                     }
@@ -370,29 +465,35 @@
         };
 
         const UI = {
+            openPicker: () => {
+                document.getElementById('sym_overlay').style.display = "flex";
+                UI.renderSyms("");
+            },
             toggleFav: (force) => {
                 if (force !== undefined) App.showFavs = force;
                 else App.showFavs = !App.showFavs;
                 document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
-                UI.filterSyms(document.getElementById('sym_filter').value);
+                UI.renderSyms(document.getElementById('sym_search').value);
             },
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.account;
                 document.getElementById('acc_bal').textContent = Math.floor(App.balance).toLocaleString() + " " + (App.currency || "");
             },
-            filterSyms: (txt) => {
-                const s = document.getElementById('sym_select');
-                s.innerHTML = "";
+            renderSyms: (txt) => {
+                const list = document.getElementById('sym_list');
+                list.innerHTML = "";
                 const term = (txt || "").toUpperCase();
                 let matches = App.allSymbols;
                 if (term) matches = matches.filter(x => P(x, "name").toUpperCase().includes(term));
                 if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
+
                 matches.slice(0, 100).forEach(i => {
-                    const o = document.createElement('option');
-                    o.value = P(i, "id");
-                    o.text = P(i, "name");
-                    s.add(o);
+                    const nav = document.createElement('div');
+                    nav.className = "sym-item";
+                    nav.innerText = P(i, "name");
+                    nav.onclick = () => Logic.selectSym(P(i, "id"), P(i, "name"));
+                    list.appendChild(nav);
                 });
             },
             updatePrice: () => document.getElementById('lbl_price').textContent = App.price.toFixed(3),
@@ -418,7 +519,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v9.1</div>
+                style="color:#fff">CALC</span> v10.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -437,19 +538,23 @@
 
     <div class="card">
         <span class="label">Trading Pair</span>
-        <div class="toggle-row">
-            <div id="btn_all" class="toggle-btn active" onclick="UI.toggleFav(false)">ALL</div>
-            <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
-        </div>
-        <input type="text" id="sym_filter" placeholder="Search...">
-        <select id="sym_select" size="5" onchange="Logic.selectSym(parseInt(this.value))"></select>
+        <button onclick="UI.openPicker()"
+            style="margin-top:5px; background:#333; color:#fff; font-weight:bold; font-size:18px; text-align:left; display:flex; justify-content:space-between; align-items:center;">
+            <span id="sel_sym_name">SELECT SYMBOL</span>
+            <span>▼</span>
+        </button>
 
-        <div style="margin-top:10px; text-align:center;">
+        <div style="margin-top:15px; text-align:center;">
             <div class="value mono" id="lbl_price" style="font-size:28px; color:#aaa">---</div>
         </div>
     </div>
 
-    <div class="row" style="gap:15px; margin-bottom:16px;">
+    <div class="side-row">
+        <div id="side_buy" class="side-btn buy active">BUY</div>
+        <div id="side_sell" class="side-btn sell">SELL</div>
+    </div>
+
+    <div class="row" style="gap:15px; margin-bottom:10px;">
         <div class="card" style="flex:1; margin:0; padding:15px; background:#252525">
             <span class="label">Risk %</span>
             <input type="number" id="in_risk" value="1.0" step="0.1">
@@ -467,7 +572,22 @@
         </div>
         <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
 
-        <button id="btn_trade" class="trade" disabled>Place Order</button>
+        <button id="btn_trade" class="trade buy" disabled>PLACE BUY ORDER</button>
+    </div>
+
+    <!-- Full Screen Symbol Overlay -->
+    <div id="sym_overlay">
+        <div class="row">
+            <span class="label" style="font-size:14px; color:#fff">Select Symbol</span>
+            <button onclick="document.getElementById('sym_overlay').style.display='none'"
+                style="width:auto; padding:8px 15px; background:#333;">Close</button>
+        </div>
+        <div class="toggle-row" style="margin-top:10px;">
+            <div id="btn_all" class="toggle-btn active" onclick="UI.toggleFav(false)">ALL</div>
+            <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
+        </div>
+        <input type="text" id="sym_search" placeholder="Search..." style="margin-top:5px;">
+        <div id="sym_list"></div>
     </div>
 
     <div id="modal">
