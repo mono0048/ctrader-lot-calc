@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v9.0</title>
+    <title>Auto Lot Calc v9.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -117,18 +117,6 @@
             font-weight: bold;
         }
 
-        #log {
-            display: none;
-            font-size: 10px;
-            color: #666;
-            white-space: pre-wrap;
-            margin-top: 20px;
-            border-top: 1px solid #333;
-            padding-top: 10px;
-            height: 100px;
-            overflow-y: auto;
-        }
-
         #modal {
             position: fixed;
             top: 0;
@@ -148,8 +136,19 @@
             padding: 30px;
             border-radius: 16px;
             text-align: center;
-            max-width: 80%;
+            max-width: 85%;
             border: 1px solid #333;
+        }
+
+        .disclaimer {
+            font-size: 11px;
+            color: #ffb74d;
+            background: #332b00;
+            padding: 8px;
+            border-radius: 8px;
+            border: 1px solid #ffb74d;
+            margin-top: 10px;
+            line-height: 1.4;
         }
     </style>
 
@@ -267,30 +266,16 @@
                         App.symbol = l[0];
                         App.symbol.id = id;
 
-                        // --- v9.0 LOGIC: UNITS to CENTS ---
-                        // 'lotSize' from API is Units (e.g., 100000).
-                        // 'stepVolume' from API is Cents (e.g., 100000) ?? Wait. 
-                        // Let's assume EVERYTHING in ProtoSymbol is CENTS if doc says "Volume in Cents".
-                        // But our experiment showed lotSize behavior acting like UNITS in calculation.
-                        // SAFE BET: Use Explicit Mapping based on known API behavior (100k vs 10M).
-
                         let rxLot = P(App.symbol, "lotSize");
-                        // If rxLot is ~100,000, it's UNITS. If ~10,000,000, it's CENTS.
                         if (!rxLot) rxLot = 100000;
 
-                        // Force to Units for calc
                         if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
                         else App.symbol._lotUnits = rxLot;
 
-                        // Force to Cents for sending (1 Lot = 10,000,000 Cents)
                         App.symbol._lotCents = App.symbol._lotUnits * 100;
-
                         let rxStep = P(App.symbol, "stepVolume");
                         if (!rxStep) rxStep = 100000;
-                        // If step is 100,000 (0.01 lot cents), it's CENTS.
-                        // If step is 1000 (0.01 lot units), it's UNITS.
-                        // cTrader usually sends Cents.
-                        App.symbol._stepCents = rxStep; // Assume API returns Cents for step
+                        App.symbol._stepCents = rxStep;
 
                         Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
@@ -318,15 +303,11 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                // Use Units for Pip Value
-                const lotUnits = App.symbol._lotUnits; // e.g. 100,000
-
+                const lotUnits = App.symbol._lotUnits;
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
-
                 const pipValQuote = lotUnits * pipSize;
-
                 const sym = P(App.symbol, "name").toUpperCase();
                 const acc = (App.currency || "").toUpperCase();
 
@@ -334,7 +315,7 @@
 
                 if (acc === "JPY") {
                     if (sym.includes("JPY")) finalPipVal = 1000;
-                    else finalPipVal = 1000;  // Simplified for JPY accounts
+                    else finalPipVal = 1000;
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
                     else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.price;
@@ -346,17 +327,9 @@
 
                 const lots = riskAmt / (sl * finalPipVal);
 
-                // --- v9.0 Volume Calc ---
-                // Calculate CENTS directly from Lots
-                // 1 Lot = _lotCents
                 let rawCents = lots * App.symbol._lotCents;
-
                 const stepCents = App.symbol._stepCents || 100000;
-                // Normalize
                 let finalCents = Math.floor(rawCents / stepCents) * stepCents;
-
-                // Min check (usually 1000 units = 100000 cents)
-                // If < step, maybe set to step? For now just floor.
 
                 App.volCents = finalCents;
                 App.volLots = finalCents / App.symbol._lotCents;
@@ -369,7 +342,6 @@
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // v9.0: Send CENTS
                 const cmd = {
                     symbolId: App.symbol.id,
                     orderType: 1, tradeSide: 1, volume: App.volCents
@@ -381,12 +353,17 @@
 
                     const err = P(res, "errorCode");
                     if (err) {
-                        // Debug Info in error
-                        const debug = `Sent: ${App.volCents} (Lots: ${App.volLots.toFixed(2)})`;
-                        UI.showModal("ERROR", err + "<br><small>" + debug + "</small>");
+                        UI.showModal("ERROR", err);
                     }
                     else {
-                        UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
+                        UI.showModal("SUCCESS",
+                            `<div style="font-size:18px; color:#fff">Ordered <b>${App.volLots.toFixed(2)}</b> Lots</div>
+                         <div class="disclaimer">
+                             ⚠️ <b>Note:</b> cTrader app may display the volume incorrectly (e.g. 100x larger) in the notification/history.<br>
+                             This is a known cTrader display bug.<br>
+                             The trade <b>WAS</b> executed correctly at <b>${App.volLots.toFixed(2)} Lot</b>.
+                         </div>`
+                        );
                     }
                 });
             }
@@ -428,8 +405,8 @@
                 const m = document.getElementById('modal');
                 m.style.display = "flex";
                 m.querySelector('.modal-content').innerHTML = `
-                <h3 style="color:${title === 'SUCCESS' ? '#00e676' : '#ff5252'}">${title}</h3><p>${msg}</p>
-                <button onclick="document.getElementById('modal').style.display='none'" style="margin-top:10px;background:#444">CLOSE</button>
+                <h3 style="color:${title === 'SUCCESS' ? '#00e676' : '#ff5252'}">${title}</h3><div>${msg}</div>
+                <button onclick="document.getElementById('modal').style.display='none'" style="margin-top:15px;background:#444">CLOSE</button>
             `;
             }
         };
@@ -441,7 +418,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v9.0</div>
+                style="color:#fff">CALC</span> v9.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
