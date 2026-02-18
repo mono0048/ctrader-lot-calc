@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v6.1</title>
+    <title>Auto Lot Calc v6.2</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -168,7 +168,7 @@
             balance: 0,
             currency: "Loading...",
             assetId: null,
-            assets: {}, // id -> {name, digits}
+            assets: {},
             allSymbols: [],
             symbol: null,
             price: 0,
@@ -183,7 +183,7 @@
                 const mid = "req-" + id + "-" + Date.now() + Math.random().toString(36).substr(2, 5);
                 if (cb) Tunnel.queue.set(mid, cb);
                 const w = { payloadType: 2100, clientMsgId: "w-" + mid, payload: { payloadType: id, clientMsgId: mid, payload: pl || {} } };
-                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(w)); } catch (e) { }
+                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(w)); } catch (e) { UI.log("SendErr:" + e); }
             },
             onMsg: (w) => {
                 let inn = null;
@@ -222,33 +222,41 @@
                 document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
 
-                // 1. Fetch Asset List (2126) first to map IDs
+                // PARALLEL CALLS: Logic is decoupled to prevent blocking
+
+                // 1. Fetch Account (Critical)
+                Tunnel.send(175, {}, res => {
+                    const t = P(res, "trader");
+                    if (t) {
+                        App.account = P(t, "login");
+                        App.balance = (P(t, "balance") || 0) / 100;
+                        App.assetId = P(res, "depositAssetId") || 1;
+
+                        // Fallback Name if Asset List fails
+                        App.currency = (App.assetId === 1) ? "USD" : (App.assetId === 6 ? "JPY" : "ID:" + App.assetId);
+
+                        UI.updateAcc();
+                        Logic.loadSyms();
+                    } else {
+                        UI.log("AccFail: " + JSON.stringify(res));
+                    }
+                });
+
+                // 2. Fetch Asset List (Optional, for better names)
                 Tunnel.send(2126, {}, res => {
                     const list = P(res, "asset");
                     if (list) {
                         list.forEach(a => {
                             App.assets[P(a, "assetId")] = { name: P(a, "name"), digits: P(a, "digits") };
                         });
-                        UI.log(`Assets Loaded: ${list.length}`);
-                    }
-
-                    // 2. Fetch Account
-                    Tunnel.send(175, {}, res => {
-                        const t = P(res, "trader");
-                        if (t) {
-                            App.account = P(t, "login");
-                            App.balance = (P(t, "balance") || 0) / 100;
-                            App.assetId = P(res, "depositAssetId") || 1; // Default USD
-
-                            // Resolve Name
-                            const a = App.assets[App.assetId];
-                            if (a) App.currency = a.name; // "JPY"
-                            else App.currency = "ID:" + App.assetId;
-
+                        // Try update currency if we have ID
+                        if (App.assetId && App.assets[App.assetId]) {
+                            App.currency = App.assets[App.assetId].name;
                             UI.updateAcc();
-                            Logic.loadSyms();
                         }
-                    });
+                    } else {
+                        UI.log("AssetsEmpty");
+                    }
                 });
             },
 
@@ -258,9 +266,8 @@
                     if (s) {
                         s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
                         App.allSymbols = s;
-                        // Check if first symbol has 'favorite' to decide default
                         if (s.length > 0 && P(s[0], "favorite")) {
-                            UI.toggleFav(true); // Default to favs if available
+                            UI.toggleFav(true);
                         } else {
                             UI.filterSyms("");
                         }
@@ -315,13 +322,12 @@
 
                 let finalPipVal = 10;
 
-                // Refined Conversion Logic v6.1
+                // Logic v6.2
                 if (sym.endsWith(acc)) {
                     finalPipVal = pipValQuote;
                 } else if (sym.startsWith(acc)) {
                     finalPipVal = pipValQuote / App.price;
                 } else {
-                    // Approximate for JPY/USD accs
                     if (acc === "JPY") finalPipVal = 1000;
                     else finalPipVal = 10;
                 }
@@ -379,10 +385,8 @@
                 const term = (txt || "").toUpperCase();
 
                 let matches = App.allSymbols;
-                // Filter by ID or Name
                 if (term) matches = matches.filter(x => P(x, "name").toUpperCase().includes(term));
 
-                // Filter by Fav
                 if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
 
                 matches.slice(0, 100).forEach(i => {
@@ -419,7 +423,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v6.1</div>
+                style="color:#fff">CALC</span> v6.2</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
