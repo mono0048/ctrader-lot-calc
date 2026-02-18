@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v6.4</title>
+    <title>Auto Lot Calc v6.5</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -227,19 +227,20 @@
                         const raw = P(t, "balance") || 0;
                         App.balance = raw / 100;
 
-                        // FIX v6.4: Get AssetId from TRADER object, not Root logic
-                        App.assetId = P(t, "depositAssetId");
-                        // Note: cTrader docs say DepositAssetId is in Trader object.
+                        // --- HYBRID CURRENCY DETECTION v6.5 ---
+                        App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
+                        let cur = "";
 
-                        // Fallback: Check root if missing (some versions)
-                        if (!App.assetId) App.assetId = P(res, "depositAssetId");
+                        // 1. Priority: Known Map (IDs we verify)
+                        if (App.assetId === 6) cur = "JPY"; // Enforce JPY for ID 6
+                        else if (App.assetId === 2) cur = "EUR"; // Enforce EUR for ID 2
 
-                        if (App.assetId === 6) App.currency = "JPY";
-                        else if (App.assetId === 1) App.currency = "USD";
-                        else if (App.assetId === 2) App.currency = "EUR";
-                        else if (App.assetId === 3) App.currency = "GBP";
-                        else App.currency = ""; // Hidden if unknown
+                        // 2. Fallback: Use String (works for USD usually) for others
+                        if (!cur) {
+                            cur = P(res, "depositCurrency") || "USD"; // Default to USD
+                        }
 
+                        App.currency = cur;
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
@@ -310,16 +311,16 @@
 
                 if (acc === "JPY") {
                     if (sym.includes("JPY")) finalPipVal = 1000;
-                    else finalPipVal = 1000; // Conservative fallback for Cross on JPY
+                    else finalPipVal = 1000;
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
                     else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.price;
+                    else finalPipVal = 10; // Fallback
                 } else {
                     finalPipVal = pipValQuote;
                 }
 
-                // Safety
-                if (!finalPipVal || finalPipVal === Infinity) finalPipVal = 10;
+                if (!finalPipVal || finalPipVal === Infinity || isNaN(finalPipVal)) finalPipVal = 10;
 
                 const lots = riskAmt / (sl * finalPipVal);
 
@@ -403,7 +404,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v6.4</div>
+                style="color:#fff">CALC</span> v6.5</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
