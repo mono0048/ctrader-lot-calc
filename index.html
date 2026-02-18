@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v16.2</title>
+    <title>Auto Lot Calc v17.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -303,10 +303,23 @@
         }
 
         .detected-comm {
-            font-size: 9px;
-            color: #448aff;
-            margin-top: 4px;
-            white-space: nowrap;
+            font-size: 10px;
+            color: #00e676;
+            margin-top: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .detected-comm:hover {
+            text-decoration: underline;
+        }
+
+        .detected-comm span {
+            background: rgba(0, 230, 118, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
         }
 
         #debug_dump {
@@ -336,7 +349,7 @@
             currency: "",
             assetId: null,
             allSymbols: [],
-            symbol: null, // Active Symbol Object (Likely from 841 or 163)
+            symbol: null,
             bid: 0,
             ask: 0,
             spread: 0,
@@ -346,9 +359,6 @@
             showFavs: false,
             slMode: "pips", // "pips" or "price"
             localFavs: [], // Array of IDs
-            debugGroup: null, // Store 176 Response
-            debugSymbol: null, // Store 163 Response
-            debugSymLast: null // Last selected symbol object
         };
 
         const Tunnel = {
@@ -396,22 +406,6 @@
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
                 document.getElementById('btn_star').onclick = Logic.toggleCurrentFav;
-
-                // Debug Inspector
-                document.getElementById('status').onclick = () => {
-                    UI.showModal("DEBUG INSPECTOR",
-                        `<div id="debug_dump">
-ACTIVE SYMBOL (App.symbol):
-${JSON.stringify(App.symbol, null, 2)}
-
-GET_SYMBOL (163) RAW:
-${JSON.stringify(App.debugSymbol, null, 2)}
-
-GROUP (176):
-${JSON.stringify(App.debugGroup, null, 2)}
-                    </div>`
-                    );
-                };
 
                 Logic.loadSettings();
             },
@@ -466,9 +460,8 @@ ${JSON.stringify(App.debugGroup, null, 2)}
             },
 
             start: () => {
-                document.getElementById('status').innerText = "ONLINE (DEBUG)";
+                document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
-                document.getElementById('status').style.cursor = "pointer";
 
                 Tunnel.send(175, {}, res => {
                     const t = P(res, "trader");
@@ -495,10 +488,7 @@ ${JSON.stringify(App.debugGroup, null, 2)}
                     }
                 });
 
-                // 176: GetAccountGroupInformationReq
                 Tunnel.send(176, {}, res => {
-                    App.debugGroup = res; // Store for inspector
-
                     const cur = P(res, "depositCurrency");
                     if (cur) {
                         App.currency = cur;
@@ -581,12 +571,9 @@ ${JSON.stringify(App.debugGroup, null, 2)}
                     // Set interim symbol from 841
                     App.symbol = s;
                     App.symbol.id = id;
-                    App.debugSymLast = s;
 
                     // 163 Request (Detailed Info)
                     Tunnel.send(163, { symbolId: [id] }, res => {
-                        App.debugSymbol = res; // Store for Inspector
-
                         const l = P(res, "symbol");
                         if (l && l[0]) {
                             // Merge 163 data into App.symbol
@@ -605,16 +592,38 @@ ${JSON.stringify(App.debugGroup, null, 2)}
 
                             UI.updateStar();
 
-                            // COMMISSION CHECK
+                            // --- COMMISSION AUTODETECT ---
+                            // "Commission": 4500
+                            // "CommissionType": "USD_PER_MILLION_USD"
+                            // Interpretation: 4500 raw -> 45.00 USD per million -> 4.50 USD per lot (side)
+                            // Round Trip = 9.00 USD per lot
+
                             let comm = P(App.symbol, "commission");
-                            if (!comm) comm = P(App.symbol, "dealCommission");
-                            // cTrader Open API sometimes calls it 'commission' in ProtoOASymbol
+                            let cType = P(App.symbol, "commissionType") || "";
 
                             const lbl = document.getElementById('comm_detect');
-                            if (comm) {
-                                lbl.innerText = "API: " + comm;
-                            } else {
-                                lbl.innerText = "";
+                            lbl.innerHTML = "";
+
+                            if (comm && cType.includes("PER_MILLION")) {
+                                const rawBase = comm / 100; // 4500 -> 45
+                                const perLotSide = rawBase / 10; // 4.5
+
+                                let finalVal = perLotSide;
+                                let unit = "USD";
+
+                                // Convert to Account Currency Logic
+                                // Assuming JPY Account for now based on user context
+                                if (cType.startsWith("USD") && App.currency === "JPY") {
+                                    // Wait for Bid to exist to convert
+                                    App.pendingComm = perLotSide;
+                                } else if (cType.startsWith("USD") && App.currency === "USD") {
+                                    finalVal = perLotSide;
+                                }
+
+                                // If we can calculate immediately (matches)
+                                if (!App.pendingComm) {
+                                    Logic.setDetectedComm(finalVal * 2); // Round Trip
+                                }
                             }
 
                             Logic.calc();
@@ -624,6 +633,17 @@ ${JSON.stringify(App.debugGroup, null, 2)}
                     Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                     Logic.calc(); // Init calc with basic info
                 }
+            },
+
+            setDetectedComm: (val) => {
+                const v = Math.round(val);
+                const lbl = document.getElementById('comm_detect');
+                lbl.innerHTML = `<span>⚡ Detected: ${v}</span>`;
+                lbl.onclick = () => {
+                    document.getElementById('in_comm').value = v;
+                    Logic.saveSettings();
+                    Logic.calc();
+                };
             },
 
             onQuote: (q) => {
@@ -643,6 +663,16 @@ ${JSON.stringify(App.debugGroup, null, 2)}
                         const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                         const pipSize = Math.pow(10, -pipPos);
                         App.spread = (App.ask - App.bid) / pipSize;
+
+                        // Lazy Comm Update if waiting for price
+                        if (App.pendingComm && App.currency === "JPY") {
+                            // USD (4.5) -> JPY
+                            // If pair is USDJPY, rate is Bid
+                            const rate = App.bid;
+                            const val = App.pendingComm * rate;
+                            Logic.setDetectedComm(val * 2); // Round Trip
+                            App.pendingComm = null;
+                        }
 
                         if ((!oldBid || oldBid === 0) && App.slMode === "price") {
                             const current = (App.tradeSide === 1) ? App.ask : App.bid;
@@ -697,6 +727,7 @@ ${JSON.stringify(App.debugGroup, null, 2)}
                     else finalPipVal = 1000;
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
+                    // Dynamic pip val for XAUUSD etc
                     else if (sym.endsWith("JPY") && App.bid) finalPipVal = 1000 / App.bid;
                     else finalPipVal = 10;
                 } else {
@@ -865,7 +896,7 @@ ${JSON.stringify(App.debugGroup, null, 2)}
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="document.getElementById('status').click()">AUTO LOT<span style="color:#fff">CALC</span> v16.2</div>
+            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
