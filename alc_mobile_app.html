@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v12.0</title>
+    <title>Auto Lot Calc v13.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -249,6 +249,7 @@
             symbol: null,
             bid: 0,
             ask: 0,
+            spread: 0,
             volCents: 0,
             volLots: 0,
             tradeSide: 1, // 1=Buy, 2=Sell
@@ -289,11 +290,9 @@
                         if (!App.ready) { App.ready = true; Logic.start(); }
                     } else { Tunnel.onMsg(m); }
                 });
-                ['in_risk', 'in_sl'].forEach(id => document.getElementById(id).oninput = Logic.calc);
+                ['in_risk', 'in_sl', 'in_comm'].forEach(id => document.getElementById(id).oninput = Logic.calc);
                 document.getElementById('btn_trade').onclick = Logic.trade;
-
                 document.getElementById('native_sym').onchange = (e) => Logic.selectSym(e.target.value);
-
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
             },
@@ -309,15 +308,25 @@
                         const raw = P(t, "balance") || 0;
                         App.balance = raw / 100;
                         App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
-                        if (App.assetId === 6) App.currency = "JPY";
-                        if (App.assetId === 1) App.currency = "USD";
+
+                        let defComm = 7;
+                        if (App.assetId === 6) { App.currency = "JPY"; defComm = 600; }
+                        if (App.assetId === 1) { App.currency = "USD"; defComm = 6; }
+
+                        document.getElementById('in_comm').value = defComm;
+
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
                 });
                 Tunnel.send(176, {}, res => {
                     const cur = P(res, "depositCurrency");
-                    if (cur) { App.currency = cur; UI.updateAcc(); }
+                    if (cur) {
+                        App.currency = cur;
+                        if (cur === "JPY") document.getElementById('in_comm').value = 600;
+                        else document.getElementById('in_comm').value = 6;
+                        UI.updateAcc();
+                    }
                 });
             },
 
@@ -386,8 +395,16 @@
 
                     if (!App.ask && App.bid) App.ask = App.bid;
 
+                    if (App.ask && App.bid) {
+                        const digits = P(App.symbol, "digits") || 3;
+                        const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
+                        const pipSize = Math.pow(10, -pipPos);
+
+                        App.spread = (App.ask - App.bid) / pipSize;
+                    }
+
                     if (App.bid) {
-                        document.getElementById('lbl_price').innerText = App.bid.toFixed(3);
+                        document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`;
                         Logic.calc();
                     }
                 }
@@ -397,9 +414,10 @@
                 if (!App.symbol || !App.bid) return;
                 const r = parseFloat(document.getElementById('in_risk').value);
                 const sl = parseFloat(document.getElementById('in_sl').value);
+                const comm = parseFloat(document.getElementById('in_comm').value) || 0;
                 if (!r || !sl) return;
 
-                const riskAmt = App.balance * (r / 100);
+                const riskAmt = App.balance * (r / 100); // 1000 JPY
 
                 const lotUnits = App.symbol._lotUnits;
                 const digits = P(App.symbol, "digits");
@@ -410,7 +428,6 @@
                 const acc = (App.currency || "").toUpperCase();
 
                 let finalPipVal = 10;
-
                 if (acc === "JPY") {
                     if (sym.includes("JPY")) finalPipVal = 1000;
                     else finalPipVal = 1000;
@@ -423,7 +440,13 @@
                 }
                 if (!finalPipVal || isNaN(finalPipVal)) finalPipVal = 10;
 
-                const lots = riskAmt / (sl * finalPipVal);
+                // --- Calc with Commission ---
+                // Risk = (Lots * SL * PipVal) + (Lots * Comm)
+                // Risk = Lots * (SL * PipVal + Comm)
+                // Lots = Risk / (SL * PipVal + Comm)
+
+                const costPerLot = (sl * finalPipVal) + comm;
+                const lots = riskAmt / costPerLot;
 
                 let rawCents = lots * App.symbol._lotCents;
                 const stepCents = App.symbol._stepCents || 100000;
@@ -446,17 +469,14 @@
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // --- SL CALCULATION v12.0 (Relative) ---
+                // --- SL CALCULATION ---
                 const isBuy = (App.tradeSide === 1);
                 const slPips = parseFloat(document.getElementById('in_sl').value);
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
-                // Calculate Distance Price
                 const distPrice = slPips * pipSize;
-
-                // Convert to Relative Units (Base 0.00001)
                 const relSL = Math.round(distPrice / 0.00001);
 
                 const cmd = {
@@ -464,7 +484,7 @@
                     orderType: 1,
                     tradeSide: App.tradeSide,
                     volume: App.volCents,
-                    relativeStopLoss: relSL // Use Relative
+                    relativeStopLoss: relSL
                 };
 
                 Tunnel.send(143, cmd, res => {
@@ -507,15 +527,12 @@
             renderSyms: () => {
                 const el = document.getElementById('native_sym');
                 el.innerHTML = "";
-
                 const ph = document.createElement('option');
                 ph.text = "Select Pair...";
                 ph.disabled = true;
                 el.add(ph);
-
                 let matches = App.allSymbols;
                 if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
-
                 matches.slice(0, 200).forEach(i => {
                     const o = document.createElement('option');
                     o.value = P(i, "id");
@@ -524,7 +541,7 @@
                     el.add(o);
                 });
             },
-            updatePrice: () => document.getElementById('lbl_price').textContent = App.bid.toFixed(3),
+            updatePrice: () => document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`,
             updateCalc: (risk) => {
                 document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
                 document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + (App.currency || "");
@@ -547,7 +564,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v12.0</div>
+                style="color:#fff">CALC</span> v13.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -598,6 +615,10 @@
         <div class="card" style="flex:1; margin:0; padding:15px; background:#252525">
             <span class="label">SL (Pips)</span>
             <input type="number" id="in_sl" value="20" step="1">
+        </div>
+        <div class="card" style="flex:1; margin:0; padding:15px; background:#252525">
+            <span class="label">Comm/Lot</span>
+            <input type="number" id="in_comm" value="600" step="10">
         </div>
     </div>
 
