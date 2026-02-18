@@ -747,7 +747,7 @@
                 let matches = App.allSymbols;
                 if (App.showFavs) matches = matches.filter(x => App.localFavs.includes(P(x, "id")));
 
-                matches.slice(0, 300).forEach(i => {
+                matches.forEach(i => {
                     const o = document.createElement('option');
                     o.value = P(i, "id");
                     o.text = P(i, "name");
@@ -786,7 +786,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v15.1</div>
+                style="color:#fff">CALC</span> v15.2</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
