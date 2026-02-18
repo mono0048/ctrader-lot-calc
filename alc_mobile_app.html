@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v7.0</title>
+    <title>Auto Lot Calc v8.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -172,7 +172,7 @@
             allSymbols: [],
             symbol: null,
             price: 0,
-            volCents: 0,
+            volUnits: 0, // Changed from volCents
             volLots: 0,
             showFavs: false
         };
@@ -220,7 +220,6 @@
                 document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
 
-                // 1. Get Account Info (175) -> Balance, Trader ID, AssetId (Fallback)
                 Tunnel.send(175, {}, res => {
                     const t = P(res, "trader");
                     if (t) {
@@ -228,17 +227,15 @@
                         const raw = P(t, "balance") || 0;
                         App.balance = raw / 100;
 
-                        // Fallback ID check (Fast)
                         App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
-                        if (App.assetId === 6) App.currency = "JPY"; // Known JPY
-                        if (App.assetId === 1) App.currency = "USD"; // Known USD
+                        if (App.assetId === 6) App.currency = "JPY";
+                        if (App.assetId === 1) App.currency = "USD";
 
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
                 });
 
-                // 2. Get Group Info (176) -> Authoritative Currency String
                 Tunnel.send(176, {}, res => {
                     const cur = P(res, "depositCurrency");
                     if (cur) {
@@ -269,7 +266,16 @@
                     if (l && l[0]) {
                         App.symbol = l[0];
                         App.symbol.id = id;
-                        App.symbol._step = P(App.symbol, "stepVolume") || 100000;
+
+                        // --- STEP VOLUME LOGIC V8.0 ---
+                        // Log shows StepVolume: 100000. 
+                        // Log shows LotSize: 10000000.
+                        // If we need Units, we assume these are Cents and divide by 100.
+                        const rawStep = P(App.symbol, "stepVolume") || 100000;
+                        App.symbol._stepUnits = rawStep / 100; // 1000 Units (0.01 Lot)
+
+                        const rawLot = P(App.symbol, "lotSize") || 10000000;
+                        App.symbol._lotUnits = rawLot / 100; // 100000 Units (1.0 Lot)
 
                         Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
@@ -297,8 +303,8 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                const lotCents = P(App.symbol, "lotSize") || 10000000;
-                const lotUnits = lotCents / 100;
+                const lotUnits = App.symbol._lotUnits || 100000; // 100,000
+
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
@@ -320,29 +326,33 @@
                 } else {
                     finalPipVal = pipValQuote;
                 }
-
-                if (!finalPipVal || finalPipVal === Infinity || isNaN(finalPipVal)) finalPipVal = 10;
+                if (!finalPipVal || isNaN(finalPipVal)) finalPipVal = 10;
 
                 const lots = riskAmt / (sl * finalPipVal);
 
-                let unitsCents = lots * lotCents;
-                const stepCents = App.symbol._step || 100000;
-                unitsCents = Math.floor(unitsCents / stepCents) * stepCents;
+                // --- VOLUME CALC v8.0 ---
+                // Target: Units (because server misinterpreted Cents)
+                let rawUnits = lots * lotUnits;
+                const stepUnits = App.symbol._stepUnits || 1000;
 
-                App.volCents = unitsCents;
-                App.volLots = unitsCents / lotCents;
+                // Normalize
+                let finalUnits = Math.floor(rawUnits / stepUnits) * stepUnits;
+
+                App.volUnits = finalUnits;
+                App.volLots = finalUnits / lotUnits;
 
                 UI.updateCalc(riskAmt);
             },
 
             trade: () => {
-                if (App.volCents <= 0) return;
+                if (App.volUnits <= 0) return;
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
+                // v8.0: Send UNITS
                 const cmd = {
                     symbolId: App.symbol.id,
-                    orderType: 1, tradeSide: 1, volume: App.volCents
+                    orderType: 1, tradeSide: 1, volume: App.volUnits
                 };
 
                 Tunnel.send(143, cmd, res => {
@@ -386,7 +396,7 @@
             updateCalc: (risk) => {
                 document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
                 document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + (App.currency || "");
-                document.getElementById('btn_trade').disabled = (App.volCents <= 0);
+                document.getElementById('btn_trade').disabled = (App.volUnits <= 0);
             },
             showModal: (title, msg) => {
                 const m = document.getElementById('modal');
@@ -405,7 +415,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v7.0</div>
+                style="color:#fff">CALC</span> v8.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
