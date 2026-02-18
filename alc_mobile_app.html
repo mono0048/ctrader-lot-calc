@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v13.0</title>
+    <title>Auto Lot Calc v13.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -290,11 +290,43 @@
                         if (!App.ready) { App.ready = true; Logic.start(); }
                     } else { Tunnel.onMsg(m); }
                 });
-                ['in_risk', 'in_sl', 'in_comm'].forEach(id => document.getElementById(id).oninput = Logic.calc);
+                ['in_risk', 'in_sl', 'in_comm'].forEach(id => {
+                    document.getElementById(id).oninput = () => {
+                        Logic.saveSettings();
+                        Logic.calc();
+                    };
+                });
                 document.getElementById('btn_trade').onclick = Logic.trade;
                 document.getElementById('native_sym').onchange = (e) => Logic.selectSym(e.target.value);
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
+
+                Logic.loadSettings();
+            },
+
+            loadSettings: () => {
+                try {
+                    const s = localStorage.getItem('alc_settings');
+                    if (s) {
+                        const j = JSON.parse(s);
+                        if (j.risk) document.getElementById('in_risk').value = j.risk;
+                        if (j.sl) document.getElementById('in_sl').value = j.sl;
+                        if (j.comm) document.getElementById('in_comm').value = j.comm; // User persistent comm
+                        if (j.showFavs !== undefined) App.showFavs = j.showFavs;
+                    }
+                } catch (e) { }
+            },
+
+            saveSettings: () => {
+                try {
+                    const s = {
+                        risk: document.getElementById('in_risk').value,
+                        sl: document.getElementById('in_sl').value,
+                        comm: document.getElementById('in_comm').value,
+                        showFavs: App.showFavs
+                    };
+                    localStorage.setItem('alc_settings', JSON.stringify(s));
+                } catch (e) { }
             },
 
             start: () => {
@@ -309,11 +341,19 @@
                         App.balance = raw / 100;
                         App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
 
-                        let defComm = 7;
-                        if (App.assetId === 6) { App.currency = "JPY"; defComm = 600; }
-                        if (App.assetId === 1) { App.currency = "USD"; defComm = 6; }
-
-                        document.getElementById('in_comm').value = defComm;
+                        // Only set default if NOT loaded from storage
+                        const commInput = document.getElementById('in_comm');
+                        if (!commInput.value || commInput.value === "600") { // Crude check so we don't overwrite user 
+                            let defComm = 7;
+                            if (App.assetId === 6) { App.currency = "JPY"; defComm = 600; }
+                            if (App.assetId === 1) { App.currency = "USD"; defComm = 6; }
+                            commInput.value = defComm;
+                            Logic.saveSettings(); // Save the auto-detected default
+                        } else {
+                            // Use stored value, just infer currency
+                            if (App.assetId === 6) App.currency = "JPY";
+                            if (App.assetId === 1) App.currency = "USD";
+                        }
 
                         UI.updateAcc();
                         Logic.loadSyms();
@@ -323,8 +363,6 @@
                     const cur = P(res, "depositCurrency");
                     if (cur) {
                         App.currency = cur;
-                        if (cur === "JPY") document.getElementById('in_comm').value = 600;
-                        else document.getElementById('in_comm').value = 6;
                         UI.updateAcc();
                     }
                 });
@@ -337,6 +375,9 @@
                         s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
                         App.allSymbols = s;
                         UI.renderSyms();
+                        // Recover Favorites state UI
+                        UI.toggleFav(App.showFavs);
+
                         if (s.length > 0) Logic.selectSym(P(s[0], "id"));
                     }
                 });
@@ -417,7 +458,7 @@
                 const comm = parseFloat(document.getElementById('in_comm').value) || 0;
                 if (!r || !sl) return;
 
-                const riskAmt = App.balance * (r / 100); // 1000 JPY
+                const riskAmt = App.balance * (r / 100);
 
                 const lotUnits = App.symbol._lotUnits;
                 const digits = P(App.symbol, "digits");
@@ -439,11 +480,6 @@
                     finalPipVal = pipValQuote;
                 }
                 if (!finalPipVal || isNaN(finalPipVal)) finalPipVal = 10;
-
-                // --- Calc with Commission ---
-                // Risk = (Lots * SL * PipVal) + (Lots * Comm)
-                // Risk = Lots * (SL * PipVal + Comm)
-                // Lots = Risk / (SL * PipVal + Comm)
 
                 const costPerLot = (sl * finalPipVal) + comm;
                 const lots = riskAmt / costPerLot;
@@ -469,7 +505,6 @@
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // --- SL CALCULATION ---
                 const isBuy = (App.tradeSide === 1);
                 const slPips = parseFloat(document.getElementById('in_sl').value);
                 const digits = P(App.symbol, "digits");
@@ -516,6 +551,7 @@
             toggleFav: (force) => {
                 if (force !== undefined) App.showFavs = force;
                 else App.showFavs = !App.showFavs;
+                App.saveSettings(); // Save state
                 document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
                 UI.renderSyms();
@@ -564,7 +600,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v13.0</div>
+                style="color:#fff">CALC</span> v13.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
