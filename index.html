@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v14.0</title>
+    <title>Auto Lot Calc v15.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -108,6 +108,29 @@
             z-index: 10;
             -webkit-appearance: none;
             appearance: none;
+        }
+
+        /* Star Button */
+        .star-btn {
+            width: 54px;
+            height: 54px;
+            flex-shrink: 0;
+            background: #2a2a2a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            color: #555;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .star-btn.active {
+            color: #ffd700;
+            border-color: #ffd700;
+            background: rgba(255, 215, 0, 0.1);
         }
 
         /* Trade Buttons */
@@ -276,7 +299,8 @@
             volLots: 0,
             tradeSide: 1, // 1=Buy, 2=Sell
             showFavs: false,
-            slMode: "pips" // "pips" or "price"
+            slMode: "pips", // "pips" or "price"
+            localFavs: [] // Array of IDs
         };
 
         const Tunnel = {
@@ -323,6 +347,7 @@
                 document.getElementById('native_sym').onchange = (e) => Logic.selectSym(e.target.value);
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
+                document.getElementById('btn_star').onclick = Logic.toggleCurrentFav;
 
                 Logic.loadSettings();
             },
@@ -337,6 +362,7 @@
                         if (j.comm) document.getElementById('in_comm').value = j.comm;
                         if (j.showFavs !== undefined) App.showFavs = j.showFavs;
                         if (j.slMode) UI.setSLMode(j.slMode);
+                        if (j.localFavs) App.localFavs = j.localFavs;
                     }
                 } catch (e) { }
             },
@@ -348,10 +374,29 @@
                         sl: document.getElementById('in_sl').value,
                         comm: document.getElementById('in_comm').value,
                         showFavs: App.showFavs,
-                        slMode: App.slMode
+                        slMode: App.slMode,
+                        localFavs: App.localFavs
                     };
                     localStorage.setItem('alc_settings', JSON.stringify(s));
                 } catch (e) { }
+            },
+
+            toggleCurrentFav: () => {
+                if (!App.symbol) return;
+                const id = App.symbol.id;
+                const idx = App.localFavs.indexOf(id);
+                if (idx >= 0) {
+                    App.localFavs.splice(idx, 1);
+                } else {
+                    App.localFavs.push(id);
+                }
+                UI.updateStar();
+                Logic.saveSettings();
+
+                // If in Fav mode, updating might hide current symbol? 
+                // Better to refresh list if strictly filtering, but standard UX may vary.
+                // Let's refresh list if showFavs is true.
+                if (App.showFavs) UI.renderSyms();
             },
 
             start: () => {
@@ -399,7 +444,6 @@
                         App.allSymbols = s;
                         UI.renderSyms();
                         UI.toggleFav(App.showFavs);
-                        // Ensure auto-selection works if not already selected
                         if (!App.symbol && s.length > 0) Logic.selectSym(P(s[0], "id"));
                     }
                 });
@@ -415,7 +459,7 @@
                 btn.className = isBuy ? "trade buy" : "trade sell";
                 btn.innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
 
-                Logic.calc(); // Side affects Price Mode calc
+                Logic.calc();
             },
 
             selectSym: (id) => {
@@ -441,8 +485,7 @@
                             if (!rxStep) rxStep = 100000;
                             App.symbol._stepCents = rxStep;
 
-                            // Set SL input to current price if empty (Price mode)
-                            // Wait for quote for that
+                            UI.updateStar();
                             Logic.calc();
                         }
                     });
@@ -484,22 +527,20 @@
                 const comm = parseFloat(document.getElementById('in_comm').value) || 0;
                 if (!r || !slInput) return;
 
-                // --- Calc Pips (v14.0) ---
                 let slPips = 0;
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
                 if (App.slMode === "price") {
-                    // Calculate difference
-                    const current = (App.tradeSide === 1) ? App.ask : App.bid; // Buy=Ask, Sell=Bid
+                    const current = (App.tradeSide === 1) ? App.ask : App.bid;
                     const diff = Math.abs(current - slInput);
                     slPips = diff / pipSize;
                 } else {
                     slPips = slInput;
                 }
 
-                if (slPips < 0.1) slPips = 0.1; // Guard
+                if (slPips < 0.1) slPips = 0.1;
 
                 const riskAmt = App.balance * (r / 100);
 
@@ -556,24 +597,13 @@
                 let finalSLPips = 0;
 
                 if (App.slMode === "price") {
-                    // Price Mode: Calculate Distance directly
-                    // Relative SL is |Current - SLPrice|
-                    // Use execution price approximation (Ask/Bid)
                     const current = isBuy ? App.ask : App.bid;
                     distPrice = Math.abs(current - slInput);
                     finalSLPips = distPrice / pipSize;
                 } else {
-                    // Pips Mode
                     distPrice = slInput * pipSize;
                     finalSLPips = slInput;
                 }
-
-                // Protocol expects Relative SL in 0.00001 units (NOT Pips)
-                // Regardless of pair? No, "Value 1 is always 0.00001 of price"
-                // Wait, for JPY pairs, 0.00001 is very small (1/1000 pip).
-                // Doc: "relativeStopLoss... value 1 is always 0.00001 of price"
-                // For JPY (e.g. 150.00), 0.00001 is 0.001 yen? No.
-                // cTrader API "relativeStopLoss" defines unit as 0.00001 (1e-5).
 
                 const relSL = Math.round(distPrice / 0.00001);
 
@@ -627,19 +657,32 @@
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
                 UI.renderSyms();
             },
+            updateStar: () => {
+                const btn = document.getElementById('btn_star');
+                if (!App.symbol) {
+                    btn.className = "star-btn";
+                    return;
+                }
+                const isFav = App.localFavs.includes(App.symbol.id);
+                btn.className = isFav ? "star-btn active" : "star-btn";
+            },
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.account;
                 document.getElementById('acc_bal').textContent = Math.floor(App.balance).toLocaleString() + " " + (App.currency || "");
             },
             renderSyms: () => {
                 const el = document.getElementById('native_sym');
+                const currentVal = el.value; // Attempt to preserve if in list
                 el.innerHTML = "";
                 const ph = document.createElement('option');
                 ph.text = "Select Pair...";
                 ph.disabled = true;
                 el.add(ph);
+
                 let matches = App.allSymbols;
-                if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
+                // Use LOCAL FAVS
+                if (App.showFavs) matches = matches.filter(x => App.localFavs.includes(P(x, "id")));
+
                 matches.slice(0, 300).forEach(i => {
                     const o = document.createElement('option');
                     o.value = P(i, "id");
@@ -647,14 +690,11 @@
                     if (App.symbol && P(App.symbol, "id") === P(i, "id")) o.selected = true;
                     el.add(o);
                 });
-                // Ensure visual update if symbol exists
-                if (App.symbol) el.value = App.symbol.id;
             },
             updatePrice: () => document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`,
             updateCalc: (risk, actualPips) => {
                 document.getElementById('out_lots').innerHTML = App.volLots.toFixed(2) + " Lots";
                 if (actualPips) document.getElementById('out_lots').innerHTML += `<div style='font-size:12px;color:#888'>(${actualPips.toFixed(1)} pips)</div>`;
-
                 document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + (App.currency || "");
                 document.getElementById('btn_trade').disabled = (App.volCents <= 0);
             },
@@ -675,7 +715,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v14.0</div>
+                style="color:#fff">CALC</span> v15.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -700,12 +740,15 @@
             <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
         </div>
 
-        <div class="select-wrapper">
-            <div class="select-btn">
-                <span id="sel_sym_name">SELECT SYMBOL</span>
-                <span>▼</span>
+        <div class="row" style="gap:10px;">
+            <div class="select-wrapper" style="flex:1;">
+                <div class="select-btn">
+                    <span id="sel_sym_name">SELECT SYMBOL</span>
+                    <span>▼</span>
+                </div>
+                <select id="native_sym" class="native-select"></select>
             </div>
-            <select id="native_sym" class="native-select"></select>
+            <div id="btn_star" class="star-btn">★</div>
         </div>
 
         <div style="margin-top:15px; text-align:center;">
