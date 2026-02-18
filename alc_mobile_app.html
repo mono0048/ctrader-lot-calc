@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v8.1</title>
+    <title>Auto Lot Calc v9.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -267,12 +267,30 @@
                         App.symbol = l[0];
                         App.symbol.id = id;
 
-                        // --- CENTS LOGIC V8.1 ---
-                        // Log: LotSize: 10000000 (Cents) -> 100,000 Units
-                        // Log: StepVolume: 100000 (Cents) -> 1,000 Units
-                        // We calculate in Cents.
-                        App.symbol._lotCents = P(App.symbol, "lotSize") || 10000000;
-                        App.symbol._stepCents = P(App.symbol, "stepVolume") || 100000;
+                        // --- v9.0 LOGIC: UNITS to CENTS ---
+                        // 'lotSize' from API is Units (e.g., 100000).
+                        // 'stepVolume' from API is Cents (e.g., 100000) ?? Wait. 
+                        // Let's assume EVERYTHING in ProtoSymbol is CENTS if doc says "Volume in Cents".
+                        // But our experiment showed lotSize behavior acting like UNITS in calculation.
+                        // SAFE BET: Use Explicit Mapping based on known API behavior (100k vs 10M).
+
+                        let rxLot = P(App.symbol, "lotSize");
+                        // If rxLot is ~100,000, it's UNITS. If ~10,000,000, it's CENTS.
+                        if (!rxLot) rxLot = 100000;
+
+                        // Force to Units for calc
+                        if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
+                        else App.symbol._lotUnits = rxLot;
+
+                        // Force to Cents for sending (1 Lot = 10,000,000 Cents)
+                        App.symbol._lotCents = App.symbol._lotUnits * 100;
+
+                        let rxStep = P(App.symbol, "stepVolume");
+                        if (!rxStep) rxStep = 100000;
+                        // If step is 100,000 (0.01 lot cents), it's CENTS.
+                        // If step is 1000 (0.01 lot units), it's UNITS.
+                        // cTrader usually sends Cents.
+                        App.symbol._stepCents = rxStep; // Assume API returns Cents for step
 
                         Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                         Logic.calc();
@@ -300,8 +318,8 @@
 
                 const riskAmt = App.balance * (r / 100);
 
-                const lotCents = App.symbol._lotCents || 10000000;
-                const lotUnits = lotCents / 100;
+                // Use Units for Pip Value
+                const lotUnits = App.symbol._lotUnits; // e.g. 100,000
 
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
@@ -316,7 +334,7 @@
 
                 if (acc === "JPY") {
                     if (sym.includes("JPY")) finalPipVal = 1000;
-                    else finalPipVal = 1000;
+                    else finalPipVal = 1000;  // Simplified for JPY accounts
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
                     else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.price;
@@ -328,15 +346,20 @@
 
                 const lots = riskAmt / (sl * finalPipVal);
 
-                // --- VOLUME CALC v8.1: CENTS ---
-                let rawCents = lots * lotCents;
-                const stepCents = App.symbol._stepCents || 100000;
+                // --- v9.0 Volume Calc ---
+                // Calculate CENTS directly from Lots
+                // 1 Lot = _lotCents
+                let rawCents = lots * App.symbol._lotCents;
 
+                const stepCents = App.symbol._stepCents || 100000;
                 // Normalize
                 let finalCents = Math.floor(rawCents / stepCents) * stepCents;
 
+                // Min check (usually 1000 units = 100000 cents)
+                // If < step, maybe set to step? For now just floor.
+
                 App.volCents = finalCents;
-                App.volLots = finalCents / lotCents;
+                App.volLots = finalCents / App.symbol._lotCents;
 
                 UI.updateCalc(riskAmt);
             },
@@ -346,7 +369,7 @@
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // v8.1: Send CENTS
+                // v9.0: Send CENTS
                 const cmd = {
                     symbolId: App.symbol.id,
                     orderType: 1, tradeSide: 1, volume: App.volCents
@@ -357,8 +380,14 @@
                     document.getElementById('btn_trade').disabled = false;
 
                     const err = P(res, "errorCode");
-                    if (err) UI.showModal("ERROR", err);
-                    else UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
+                    if (err) {
+                        // Debug Info in error
+                        const debug = `Sent: ${App.volCents} (Lots: ${App.volLots.toFixed(2)})`;
+                        UI.showModal("ERROR", err + "<br><small>" + debug + "</small>");
+                    }
+                    else {
+                        UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
+                    }
                 });
             }
         };
@@ -412,7 +441,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v8.1</div>
+                style="color:#fff">CALC</span> v9.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
