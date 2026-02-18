@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v11.0</title>
+    <title>Auto Lot Calc v11.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -350,23 +350,30 @@
                 id = parseInt(id);
                 const s = App.allSymbols.find(x => P(x, "id") === id);
                 if (s) {
-                    App.symbol = s;
                     document.getElementById('sel_sym_name').innerText = P(s, "name");
 
-                    let rxLot = P(s, "lotSize");
-                    if (!rxLot) rxLot = 100000;
-                    // Unit fix override for calculation 
-                    if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
-                    else App.symbol._lotUnits = rxLot;
+                    // CORRECT LOGIC: Fetch detail to ensure full capability and ID
+                    Tunnel.send(163, { symbolId: [id] }, res => {
+                        const l = P(res, "symbol");
+                        if (l && l[0]) {
+                            App.symbol = l[0];
+                            App.symbol.id = id; // Ensure ID is set
 
-                    App.symbol._lotCents = App.symbol._lotUnits * 100;
-                    let rxStep = P(s, "stepVolume");
-                    if (!rxStep) rxStep = 100000;
-                    App.symbol._stepCents = rxStep;
+                            let rxLot = P(App.symbol, "lotSize");
+                            if (!rxLot) rxLot = 100000;
+                            if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
+                            else App.symbol._lotUnits = rxLot;
 
-                    Tunnel.send(163, { symbolId: [id] });
+                            App.symbol._lotCents = App.symbol._lotUnits * 100;
+                            let rxStep = P(App.symbol, "stepVolume");
+                            if (!rxStep) rxStep = 100000;
+                            App.symbol._stepCents = rxStep;
+
+                            Logic.calc();
+                        }
+                    });
+
                     Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
-                    Logic.calc();
                 }
             },
 
@@ -435,11 +442,16 @@
             trade: () => {
                 if (App.volCents <= 0) return;
                 if (!App.bid || !App.ask) return;
+                // Safety check for ID
+                if (!App.symbol || !App.symbol.id) {
+                    UI.showModal("ERROR", "Symbol ID missing. Please re-select symbol.");
+                    return;
+                }
 
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // --- SL CALCULATION v11.0 ---
+                // --- SL CALCULATION ---
                 const isBuy = (App.tradeSide === 1);
                 const slPips = parseFloat(document.getElementById('in_sl').value);
                 const digits = P(App.symbol, "digits");
@@ -448,16 +460,11 @@
 
                 let slPrice = 0;
                 if (isBuy) {
-                    // Buy: Open at Ask, SL below Bid (or Ask)
-                    // Typically SL is relative to entry. Entry ~ Ask.
                     slPrice = App.ask - (slPips * pipSize);
                 } else {
-                    // Sell: Open at Bid, SL above Ask (or Bid)
-                    // Entry ~ Bid.
                     slPrice = App.bid + (slPips * pipSize);
                 }
 
-                // Round to digits
                 slPrice = parseFloat(slPrice.toFixed(digits));
 
                 const cmd = {
@@ -465,7 +472,7 @@
                     orderType: 1,
                     tradeSide: App.tradeSide,
                     volume: App.volCents,
-                    stopLoss: slPrice // Add SL
+                    stopLoss: slPrice
                 };
 
                 Tunnel.send(143, cmd, res => {
@@ -509,7 +516,6 @@
                 const el = document.getElementById('native_sym');
                 el.innerHTML = "";
 
-                // Add Placeholder
                 const ph = document.createElement('option');
                 ph.text = "Select Pair...";
                 ph.disabled = true;
@@ -549,7 +555,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v11.0</div>
+                style="color:#fff">CALC</span> v11.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
