@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v15.0</title>
+    <title>Auto Lot Calc v15.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -361,8 +361,13 @@
                         if (j.sl) document.getElementById('in_sl').value = j.sl;
                         if (j.comm) document.getElementById('in_comm').value = j.comm;
                         if (j.showFavs !== undefined) App.showFavs = j.showFavs;
-                        if (j.slMode) UI.setSLMode(j.slMode);
+                        if (j.slMode) UI.setSLMode(j.slMode, true); // true to skip recalc
                         if (j.localFavs) App.localFavs = j.localFavs;
+
+                        // Safety: If showFavs is true but no localfavs, switch to All
+                        if (App.showFavs && (!App.localFavs || App.localFavs.length === 0)) {
+                            App.showFavs = false;
+                        }
                     }
                 } catch (e) { }
             },
@@ -393,9 +398,6 @@
                 UI.updateStar();
                 Logic.saveSettings();
 
-                // If in Fav mode, updating might hide current symbol? 
-                // Better to refresh list if strictly filtering, but standard UX may vary.
-                // Let's refresh list if showFavs is true.
                 if (App.showFavs) UI.renderSyms();
             },
 
@@ -444,6 +446,7 @@
                         App.allSymbols = s;
                         UI.renderSyms();
                         UI.toggleFav(App.showFavs);
+                        // If current not valid, auto-select
                         if (!App.symbol && s.length > 0) Logic.selectSym(P(s[0], "id"));
                     }
                 });
@@ -459,7 +462,47 @@
                 btn.className = isBuy ? "trade buy" : "trade sell";
                 btn.innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
 
+                // Recalculate SL Price if in Price Mode because it depends on ask/bid
+                if (App.slMode === "price") {
+                    Logic.updateSLInputValueFromPips();
+                }
                 Logic.calc();
+            },
+
+            updateSLInputValueFromPips: () => {
+                // If we are in Price mode, but we just switched side or symbol,
+                // we might want to default to a reasonable price based on the current "Pips" stored?
+                // OR, if we are just maintaining the state.
+                // Best UX: When switching to Price Mode, populate input with (CurrentPrice +/- 20pips).
+                // When switching to Pips Mode, calculate (Price - Current) -> Pips.
+                // This function handles the "Switching" logic mostly.
+            },
+
+            convertSLInput: (newMode) => {
+                if (!App.bid || !App.symbol) return;
+                const current = (App.tradeSide === 1) ? App.ask : App.bid;
+                const val = parseFloat(document.getElementById('in_sl').value);
+                const digits = P(App.symbol, "digits");
+                const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
+                const pipSize = Math.pow(10, -pipPos);
+
+                if (newMode === "price") {
+                    // Pips -> Price
+                    // Price = Current - (Pips * PipSize) for Buy
+                    const pips = val;
+                    let price = 0;
+                    if (App.tradeSide === 1) price = current - (pips * pipSize);
+                    else price = current + (pips * pipSize);
+                    document.getElementById('in_sl').value = price.toFixed(digits);
+                    document.getElementById('in_sl').step = pipSize;
+                } else {
+                    // Price -> Pips
+                    // Pips = |Current - Price| / PipSize
+                    const price = val;
+                    const pips = Math.abs(current - price) / pipSize;
+                    document.getElementById('in_sl').value = Math.max(1, Math.round(pips));
+                    document.getElementById('in_sl').step = 1;
+                }
             },
 
             selectSym: (id) => {
@@ -486,6 +529,14 @@
                             App.symbol._stepCents = rxStep;
 
                             UI.updateStar();
+
+                            // Reset SL Input to default pips (or convert) when changing symbol to avoid crazy prices
+                            if (App.slMode === "price") {
+                                // Switch temporarily to pips default then back to price
+                                // Or just set a default 20 pips distance price
+                                // We need Quote to do this accurately.
+                                // For now, let's wait for Quote.
+                            }
                             Logic.calc();
                         }
                     });
@@ -499,6 +550,7 @@
                 if (App.symbol && P(App.symbol, "id") == sid) {
                     const bid = P(q, "bid");
                     const ask = P(q, "ask");
+                    const oldBid = App.bid;
 
                     if (bid) App.bid = bid / 100000;
                     if (ask) App.ask = ask / 100000;
@@ -511,6 +563,16 @@
                         const pipSize = Math.pow(10, -pipPos);
 
                         App.spread = (App.ask - App.bid) / pipSize;
+
+                        // Init SL Price if first loaded and in price mode
+                        if (!oldBid && App.slMode === "price") {
+                            // Default 20 pips away
+                            const current = (App.tradeSide === 1) ? App.ask : App.bid;
+                            const defPips = 20;
+                            const price = (App.tradeSide === 1) ? (current - defPips * pipSize) : (current + defPips * pipSize);
+                            document.getElementById('in_sl').value = price.toFixed(digits);
+                            document.getElementById('in_sl').step = pipSize;
+                        }
                     }
 
                     if (App.bid) {
@@ -578,6 +640,7 @@
             trade: () => {
                 if (App.volCents <= 0) return;
                 if (!App.bid || !App.ask) return;
+                // V15.1: Fix ID check again
                 if (!App.symbol || !App.symbol.id) {
                     UI.showModal("ERROR", "Symbol ID missing. Please re-select symbol.");
                     return;
@@ -641,7 +704,10 @@
         };
 
         const UI = {
-            setSLMode: (mode) => {
+            setSLMode: (mode, skipConvert) => {
+                if (!skipConvert && App.slMode !== mode) {
+                    Logic.convertSLInput(mode);
+                }
                 App.slMode = mode;
                 document.getElementById('btn_sl_pips').className = (mode === 'pips' ? 'sl-mode-btn active' : 'sl-mode-btn');
                 document.getElementById('btn_sl_price').className = (mode === 'price' ? 'sl-mode-btn active' : 'sl-mode-btn');
@@ -672,7 +738,6 @@
             },
             renderSyms: () => {
                 const el = document.getElementById('native_sym');
-                const currentVal = el.value; // Attempt to preserve if in list
                 el.innerHTML = "";
                 const ph = document.createElement('option');
                 ph.text = "Select Pair...";
@@ -680,7 +745,6 @@
                 el.add(ph);
 
                 let matches = App.allSymbols;
-                // Use LOCAL FAVS
                 if (App.showFavs) matches = matches.filter(x => App.localFavs.includes(P(x, "id")));
 
                 matches.slice(0, 300).forEach(i => {
@@ -690,6 +754,13 @@
                     if (App.symbol && P(App.symbol, "id") === P(i, "id")) o.selected = true;
                     el.add(o);
                 });
+                // If empty
+                if (matches.length === 0) {
+                    const o = document.createElement('option');
+                    o.text = "(No Favorites Found)";
+                    o.disabled = true;
+                    el.add(o);
+                }
             },
             updatePrice: () => document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`,
             updateCalc: (risk, actualPips) => {
@@ -715,7 +786,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v15.0</div>
+                style="color:#fff">CALC</span> v15.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
