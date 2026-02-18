@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v16.1</title>
+    <title>Auto Lot Calc v16.2</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -336,7 +336,7 @@
             currency: "",
             assetId: null,
             allSymbols: [],
-            symbol: null,
+            symbol: null, // Active Symbol Object (Likely from 841 or 163)
             bid: 0,
             ask: 0,
             spread: 0,
@@ -347,7 +347,8 @@
             slMode: "pips", // "pips" or "price"
             localFavs: [], // Array of IDs
             debugGroup: null, // Store 176 Response
-            debugSymbol: null // Store 163 Response
+            debugSymbol: null, // Store 163 Response
+            debugSymLast: null // Last selected symbol object
         };
 
         const Tunnel = {
@@ -400,11 +401,14 @@
                 document.getElementById('status').onclick = () => {
                     UI.showModal("DEBUG INSPECTOR",
                         `<div id="debug_dump">
+ACTIVE SYMBOL (App.symbol):
+${JSON.stringify(App.symbol, null, 2)}
+
+GET_SYMBOL (163) RAW:
+${JSON.stringify(App.debugSymbol, null, 2)}
+
 GROUP (176):
 ${JSON.stringify(App.debugGroup, null, 2)}
-
-SYMBOL (163):
-${JSON.stringify(App.debugSymbol, null, 2)}
                     </div>`
                     );
                 };
@@ -567,16 +571,26 @@ ${JSON.stringify(App.debugSymbol, null, 2)}
             selectSym: (id) => {
                 if (!id) return;
                 id = parseInt(id);
+
+                // 841 Look up (Basic Info)
                 const s = App.allSymbols.find(x => P(x, "id") === id);
+
                 if (s) {
                     document.getElementById('sel_sym_name').innerText = P(s, "name");
 
+                    // Set interim symbol from 841
+                    App.symbol = s;
+                    App.symbol.id = id;
+                    App.debugSymLast = s;
+
+                    // 163 Request (Detailed Info)
                     Tunnel.send(163, { symbolId: [id] }, res => {
                         App.debugSymbol = res; // Store for Inspector
 
                         const l = P(res, "symbol");
                         if (l && l[0]) {
-                            App.symbol = l[0];
+                            // Merge 163 data into App.symbol
+                            App.symbol = Object.assign({}, App.symbol, l[0]);
                             App.symbol.id = id;
 
                             let rxLot = P(App.symbol, "lotSize");
@@ -591,11 +605,10 @@ ${JSON.stringify(App.debugSymbol, null, 2)}
 
                             UI.updateStar();
 
-                            // COMMISSION CHECK (v16.1 logic attempt)
-                            // Note: Depending on API, comm might be in Group, not Symbol.
-                            // We will inspect App.debugGroup later.
+                            // COMMISSION CHECK
                             let comm = P(App.symbol, "commission");
                             if (!comm) comm = P(App.symbol, "dealCommission");
+                            // cTrader Open API sometimes calls it 'commission' in ProtoOASymbol
 
                             const lbl = document.getElementById('comm_detect');
                             if (comm) {
@@ -609,6 +622,7 @@ ${JSON.stringify(App.debugSymbol, null, 2)}
                     });
 
                     Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
+                    Logic.calc(); // Init calc with basic info
                 }
             },
 
@@ -851,7 +865,7 @@ ${JSON.stringify(App.debugSymbol, null, 2)}
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="document.getElementById('status').click()">AUTO LOT<span style="color:#fff">CALC</span> v16.1</div>
+            onclick="document.getElementById('status').click()">AUTO LOT<span style="color:#fff">CALC</span> v16.2</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
