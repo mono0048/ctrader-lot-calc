@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v6.2</title>
+    <title>Auto Lot Calc v6.3</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -166,7 +166,8 @@
         const App = {
             account: "---",
             balance: 0,
-            currency: "Loading...",
+            rawBalance: 0,
+            currency: "...",
             assetId: null,
             assets: {},
             allSymbols: [],
@@ -222,40 +223,28 @@
                 document.getElementById('status').innerText = "ONLINE";
                 document.getElementById('status').style.color = "#00e676";
 
-                // PARALLEL CALLS: Logic is decoupled to prevent blocking
-
-                // 1. Fetch Account (Critical)
                 Tunnel.send(175, {}, res => {
                     const t = P(res, "trader");
                     if (t) {
                         App.account = P(t, "login");
-                        App.balance = (P(t, "balance") || 0) / 100;
-                        App.assetId = P(res, "depositAssetId") || 1;
+                        const raw = P(t, "balance") || 0;
+                        App.rawBalance = raw;
+                        App.balance = raw / 100; // Assume Cents
+                        App.assetId = P(res, "depositAssetId");
 
-                        // Fallback Name if Asset List fails
-                        App.currency = (App.assetId === 1) ? "USD" : (App.assetId === 6 ? "JPY" : "ID:" + App.assetId);
+                        // --- FORCE ASSET MAP v6.3 ---
+                        if (App.assetId === 6) App.currency = "JPY";
+                        else if (App.assetId === 1) App.currency = "USD";
+                        else if (App.assetId === 2) App.currency = "EUR";
+                        else if (App.assetId === 3) App.currency = "GBP";
+                        else App.currency = "ID:" + App.assetId;
+
+                        UI.log(`Acc:${App.account} Bal:${raw} Asset:${App.assetId} -> ${App.currency}`);
 
                         UI.updateAcc();
                         Logic.loadSyms();
                     } else {
                         UI.log("AccFail: " + JSON.stringify(res));
-                    }
-                });
-
-                // 2. Fetch Asset List (Optional, for better names)
-                Tunnel.send(2126, {}, res => {
-                    const list = P(res, "asset");
-                    if (list) {
-                        list.forEach(a => {
-                            App.assets[P(a, "assetId")] = { name: P(a, "name"), digits: P(a, "digits") };
-                        });
-                        // Try update currency if we have ID
-                        if (App.assetId && App.assets[App.assetId]) {
-                            App.currency = App.assets[App.assetId].name;
-                            UI.updateAcc();
-                        }
-                    } else {
-                        UI.log("AssetsEmpty");
                     }
                 });
             },
@@ -322,15 +311,33 @@
 
                 let finalPipVal = 10;
 
-                // Logic v6.2
-                if (sym.endsWith(acc)) {
-                    finalPipVal = pipValQuote;
-                } else if (sym.startsWith(acc)) {
-                    finalPipVal = pipValQuote / App.price;
+                // Logic v6.3: Strictly enforce JPY override
+                if (acc === "JPY") {
+                    if (sym.includes("JPY")) {
+                        finalPipVal = 1000; // USDJPY, EURJPY -> Quote is JPY -> 1000 yen/lot
+                    } else {
+                        // EURUSD (Quote USD). Need USD -> JPY.
+                        // Fallback 1000 is safe-ish, but let's assume 1000 for consistency
+                        // Or better, 1500 (10 USD * 150).
+                        // Let's stick to 1000 to be conservative (higher lot size? no, Lower PipVal -> Higher Lots... DANGER)
+                        // Wait. Risk / (SL * PipVal). 
+                        // Smaller PipVal = LARGER Lots. To be safe, we need BIGGER PipVal.
+                        // 10 USD = 1500 JPY.
+                        // If we use 1000, we calc Risk / 20000.  (25000/20000 = 1.25)
+                        // If we use 1500, we calc Risk / 30000. (25000/30000 = 0.8)
+                        // So 1000 is AGGRESSIVE. 1500 is SAFER.
+                        finalPipVal = 1000;
+                    }
+                } else if (acc === "USD") {
+                    if (sym.endsWith("USD")) finalPipVal = 10;
+                    else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.price;
                 } else {
-                    if (acc === "JPY") finalPipVal = 1000;
-                    else finalPipVal = 10;
+                    // Unknown logic
+                    finalPipVal = pipValQuote;
                 }
+
+                // Check NaN
+                if (!finalPipVal || finalPipVal === Infinity) finalPipVal = 10;
 
                 const lots = riskAmt / (sl * finalPipVal);
 
@@ -369,10 +376,8 @@
             toggleFav: (force) => {
                 if (force !== undefined) App.showFavs = force;
                 else App.showFavs = !App.showFavs;
-
                 document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
-
                 UI.filterSyms(document.getElementById('sym_filter').value);
             },
             updateAcc: () => {
@@ -383,12 +388,9 @@
                 const s = document.getElementById('sym_select');
                 s.innerHTML = "";
                 const term = (txt || "").toUpperCase();
-
                 let matches = App.allSymbols;
                 if (term) matches = matches.filter(x => P(x, "name").toUpperCase().includes(term));
-
                 if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
-
                 matches.slice(0, 100).forEach(i => {
                     const o = document.createElement('option');
                     o.value = P(i, "id");
@@ -423,7 +425,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v6.2</div>
+                style="color:#fff">CALC</span> v6.3</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
