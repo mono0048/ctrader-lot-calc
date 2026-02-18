@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v17.1</title>
+    <title>Auto Lot Calc v17.2</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -320,6 +320,15 @@
             background: rgba(0, 230, 118, 0.1);
             padding: 2px 6px;
             border-radius: 4px;
+        }
+
+        .res-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            color: #888;
+            margin-top: 4px;
         }
 
         #debug_dump {
@@ -640,7 +649,7 @@
             setDetectedComm: (val) => {
                 const v = Math.round(val);
                 const lbl = document.getElementById('comm_detect');
-                lbl.innerHTML = `<span>⚡ Detected: ${v}</span>`;
+                lbl.innerHTML = `<span>⚡ Detected: ${v}/Lot</span>`;
                 lbl.onclick = () => {
                     document.getElementById('in_comm').value = v;
                     Logic.saveSettings();
@@ -749,7 +758,8 @@
                 App.volCents = finalCents;
                 App.volLots = finalCents / App.symbol._lotCents;
 
-                UI.updateCalc(riskAmt, slPips);
+                const totalComm = App.volLots * comm;
+                UI.updateCalc(riskAmt, slPips, totalComm);
             },
 
             trade: () => {
@@ -875,9 +885,15 @@
                 el.innerHTML = ph + opts;
             },
             updatePrice: () => document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`,
-            updateCalc: (risk, actualPips) => {
+            updateCalc: (risk, actualPips, totalComm) => {
                 document.getElementById('out_lots').innerHTML = App.volLots.toFixed(2) + " Lots";
-                if (actualPips) document.getElementById('out_lots').innerHTML += `<div style='font-size:12px;color:#888'>(${actualPips.toFixed(1)} pips)</div>`;
+
+                let extra = "";
+                if (actualPips) extra += `<div>(${actualPips.toFixed(1)} pips)</div>`;
+                if (totalComm) extra += `<div>Est. Comm: ${Math.round(totalComm)} ${App.currency || ""}</div>`;
+
+                if (extra) document.getElementById('out_lots').innerHTML += `<div style='font-size:12px;color:#888;margin-top:2px;'>${extra}</div>`;
+
                 document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + (App.currency || "");
                 document.getElementById('btn_trade').disabled = (App.volCents <= 0);
             },
@@ -898,7 +914,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.1</div>
+            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.2</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
