@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v15.3</title>
+    <title>Auto Lot Calc v16.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -293,11 +293,17 @@
             border-radius: 12px;
         }
 
-        /* Ensure inputs don't overflow */
         .input-card input {
             padding: 8px 10px;
             font-size: 16px;
             height: 40px;
+        }
+
+        .detected-comm {
+            font-size: 9px;
+            color: #448aff;
+            margin-top: 4px;
+            white-space: nowrap;
         }
     </style>
 
@@ -550,6 +556,27 @@
                             App.symbol._stepCents = rxStep;
 
                             UI.updateStar();
+
+                            // COMMISSION CHECK
+                            // Look for 'commission' field provided by newer API versions
+                            // Or 'minCommission'
+                            let comm = P(App.symbol, "commission"); // Usually per million?
+                            if (!comm) comm = P(App.symbol, "dealCommission"); // Sometimes dealCommission
+
+                            const lbl = document.getElementById('comm_detect');
+                            if (comm) {
+                                // Heuristic: If comm > 1000, likely per billion? Or raw?
+                                // Standard: ~30 per million. 
+                                // If comm is say "30", it means 30 units per million.
+                                // 1 Lot = 100,000. 
+                                // Cost per Lot = 30 * (100k/1m) * 2 (round trip) = 6 units.
+                                // Input is usually "6" or "600".
+                                // Let's display the raw value to validat
+                                lbl.innerText = "API: " + comm;
+                            } else {
+                                lbl.innerText = "";
+                            }
+
                             Logic.calc();
                         }
                     });
@@ -732,7 +759,7 @@
             toggleFav: (force) => {
                 if (force !== undefined) App.showFavs = force;
                 else App.showFavs = !App.showFavs;
-                App.saveSettings();
+                Logic.saveSettings(); // CHANGED FROM App.saveSettings
                 document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
                 UI.renderSyms();
@@ -757,7 +784,7 @@
                 let matches = App.allSymbols;
                 if (App.showFavs) matches = matches.filter(x => App.localFavs.includes(P(x, "id")));
 
-                // PERF FIX for "ALL button stuck"
+                // PERF FIX + No Items
                 if (matches.length === 0) {
                     el.innerHTML = "<option disabled>(No Favorites Found)</option>";
                     return;
@@ -765,7 +792,6 @@
 
                 const currentId = App.symbol ? App.symbol.id : null;
 
-                // Batch String Concatenation (Much faster than 1000 x appendChild)
                 const opts = matches.map(i => {
                     const id = P(i, "id");
                     const name = P(i, "name");
@@ -799,7 +825,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v15.3</div>
+                style="color:#fff">CALC</span> v16.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -863,6 +889,7 @@
         <div class="input-card">
             <span class="label">Comm/Lot</span>
             <input type="number" id="in_comm" value="600" step="10">
+            <div id="comm_detect" class="detected-comm"></div>
         </div>
     </div>
 
