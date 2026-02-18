@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v6.3</title>
+    <title>Auto Lot Calc v6.4</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -107,6 +107,7 @@
             border-radius: 8px;
             cursor: pointer;
             text-align: center;
+            transition: 0.2s;
         }
 
         .toggle-btn.active {
@@ -117,7 +118,7 @@
         }
 
         #log {
-            display: block;
+            display: none;
             font-size: 10px;
             color: #666;
             white-space: pre-wrap;
@@ -166,10 +167,8 @@
         const App = {
             account: "---",
             balance: 0,
-            rawBalance: 0,
-            currency: "...",
+            currency: "",
             assetId: null,
-            assets: {},
             allSymbols: [],
             symbol: null,
             price: 0,
@@ -184,7 +183,7 @@
                 const mid = "req-" + id + "-" + Date.now() + Math.random().toString(36).substr(2, 5);
                 if (cb) Tunnel.queue.set(mid, cb);
                 const w = { payloadType: 2100, clientMsgId: "w-" + mid, payload: { payloadType: id, clientMsgId: mid, payload: pl || {} } };
-                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(w)); } catch (e) { UI.log("SendErr:" + e); }
+                try { window.EventBasedPluginJavaScriptBridge.handlePluginEvent(JSON.stringify(w)); } catch (e) { }
             },
             onMsg: (w) => {
                 let inn = null;
@@ -195,11 +194,9 @@
                     }
                 } catch (e) { }
                 if (!inn) return;
-
                 const mid = P(inn, "clientMsgId");
                 const pl = P(inn, "payload");
                 if (mid && Tunnel.queue.has(mid)) { Tunnel.queue.get(mid)(pl); Tunnel.queue.delete(mid); }
-
                 const type = P(inn, "payloadType");
                 if (type === 3 || type === "PROTO_QUOTE_EVENT") Logic.onQuote(inn.payload || inn);
             }
@@ -228,23 +225,23 @@
                     if (t) {
                         App.account = P(t, "login");
                         const raw = P(t, "balance") || 0;
-                        App.rawBalance = raw;
-                        App.balance = raw / 100; // Assume Cents
-                        App.assetId = P(res, "depositAssetId");
+                        App.balance = raw / 100;
 
-                        // --- FORCE ASSET MAP v6.3 ---
+                        // FIX v6.4: Get AssetId from TRADER object, not Root logic
+                        App.assetId = P(t, "depositAssetId");
+                        // Note: cTrader docs say DepositAssetId is in Trader object.
+
+                        // Fallback: Check root if missing (some versions)
+                        if (!App.assetId) App.assetId = P(res, "depositAssetId");
+
                         if (App.assetId === 6) App.currency = "JPY";
                         else if (App.assetId === 1) App.currency = "USD";
                         else if (App.assetId === 2) App.currency = "EUR";
                         else if (App.assetId === 3) App.currency = "GBP";
-                        else App.currency = "ID:" + App.assetId;
-
-                        UI.log(`Acc:${App.account} Bal:${raw} Asset:${App.assetId} -> ${App.currency}`);
+                        else App.currency = ""; // Hidden if unknown
 
                         UI.updateAcc();
                         Logic.loadSyms();
-                    } else {
-                        UI.log("AccFail: " + JSON.stringify(res));
                     }
                 });
             },
@@ -311,32 +308,17 @@
 
                 let finalPipVal = 10;
 
-                // Logic v6.3: Strictly enforce JPY override
                 if (acc === "JPY") {
-                    if (sym.includes("JPY")) {
-                        finalPipVal = 1000; // USDJPY, EURJPY -> Quote is JPY -> 1000 yen/lot
-                    } else {
-                        // EURUSD (Quote USD). Need USD -> JPY.
-                        // Fallback 1000 is safe-ish, but let's assume 1000 for consistency
-                        // Or better, 1500 (10 USD * 150).
-                        // Let's stick to 1000 to be conservative (higher lot size? no, Lower PipVal -> Higher Lots... DANGER)
-                        // Wait. Risk / (SL * PipVal). 
-                        // Smaller PipVal = LARGER Lots. To be safe, we need BIGGER PipVal.
-                        // 10 USD = 1500 JPY.
-                        // If we use 1000, we calc Risk / 20000.  (25000/20000 = 1.25)
-                        // If we use 1500, we calc Risk / 30000. (25000/30000 = 0.8)
-                        // So 1000 is AGGRESSIVE. 1500 is SAFER.
-                        finalPipVal = 1000;
-                    }
+                    if (sym.includes("JPY")) finalPipVal = 1000;
+                    else finalPipVal = 1000; // Conservative fallback for Cross on JPY
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
                     else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.price;
                 } else {
-                    // Unknown logic
                     finalPipVal = pipValQuote;
                 }
 
-                // Check NaN
+                // Safety
                 if (!finalPipVal || finalPipVal === Infinity) finalPipVal = 10;
 
                 const lots = riskAmt / (sl * finalPipVal);
@@ -411,10 +393,6 @@
                 <h3 style="color:${title === 'SUCCESS' ? '#00e676' : '#ff5252'}">${title}</h3><p>${msg}</p>
                 <button onclick="document.getElementById('modal').style.display='none'" style="margin-top:10px;background:#444">CLOSE</button>
             `;
-            },
-            log: (t) => {
-                const l = document.getElementById('log');
-                l.textContent = t + "\n" + l.textContent.substring(0, 500);
             }
         };
 
@@ -425,7 +403,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v6.3</div>
+                style="color:#fff">CALC</span> v6.4</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -477,7 +455,6 @@
         <button id="btn_trade" class="trade" disabled>Place Order</button>
     </div>
 
-    <div id="log">Logs...</div>
     <div id="modal">
         <div class="modal-content"></div>
     </div>
