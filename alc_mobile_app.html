@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v17.0</title>
+    <title>Auto Lot Calc v17.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -595,8 +595,10 @@
                             // --- COMMISSION AUTODETECT ---
                             // "Commission": 4500
                             // "CommissionType": "USD_PER_MILLION_USD"
-                            // Interpretation: 4500 raw -> 45.00 USD per million -> 4.50 USD per lot (side)
-                            // Round Trip = 9.00 USD per lot
+                            // Interpretation: 4500 raw -> 45.00 USD per million
+                            // 1 Lot = 100k
+                            // Cost = 45 * (100k / 1m) = 4.5 USD
+                            // This matches user data: 0.6 Lot = 415 JPY -> 4.5 USD
 
                             let comm = P(App.symbol, "commission");
                             let cType = P(App.symbol, "commissionType") || "";
@@ -606,23 +608,23 @@
 
                             if (comm && cType.includes("PER_MILLION")) {
                                 const rawBase = comm / 100; // 4500 -> 45
-                                const perLotSide = rawBase / 10; // 4.5
+                                const perLot = rawBase / 10; // 4.5
 
-                                let finalVal = perLotSide;
+                                let finalVal = perLot;
                                 let unit = "USD";
 
                                 // Convert to Account Currency Logic
-                                // Assuming JPY Account for now based on user context
+                                // Assuming JPY Account based on context
                                 if (cType.startsWith("USD") && App.currency === "JPY") {
                                     // Wait for Bid to exist to convert
-                                    App.pendingComm = perLotSide;
+                                    App.pendingComm = perLot;
                                 } else if (cType.startsWith("USD") && App.currency === "USD") {
-                                    finalVal = perLotSide;
+                                    finalVal = perLot;
                                 }
 
                                 // If we can calculate immediately (matches)
                                 if (!App.pendingComm) {
-                                    Logic.setDetectedComm(finalVal * 2); // Round Trip
+                                    Logic.setDetectedComm(finalVal); // Round Trip (Not x2)
                                 }
                             }
 
@@ -670,7 +672,7 @@
                             // If pair is USDJPY, rate is Bid
                             const rate = App.bid;
                             const val = App.pendingComm * rate;
-                            Logic.setDetectedComm(val * 2); // Round Trip
+                            Logic.setDetectedComm(val); // Round Trip (Not x2)
                             App.pendingComm = null;
                         }
 
@@ -896,7 +898,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.0</div>
+            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
