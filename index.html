@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v16.0</title>
+    <title>Auto Lot Calc v16.1</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -240,6 +240,9 @@
             text-align: center;
             max-width: 85%;
             border: 1px solid #333;
+            width: 90%;
+            height: 80%;
+            overflow: auto;
         }
 
         .disclaimer {
@@ -305,6 +308,15 @@
             margin-top: 4px;
             white-space: nowrap;
         }
+
+        #debug_dump {
+            text-align: left;
+            font-family: monospace;
+            font-size: 10px;
+            color: #0f0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
     </style>
 
     <script>
@@ -333,7 +345,9 @@
             tradeSide: 1, // 1=Buy, 2=Sell
             showFavs: false,
             slMode: "pips", // "pips" or "price"
-            localFavs: [] // Array of IDs
+            localFavs: [], // Array of IDs
+            debugGroup: null, // Store 176 Response
+            debugSymbol: null // Store 163 Response
         };
 
         const Tunnel = {
@@ -381,6 +395,19 @@
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
                 document.getElementById('btn_star').onclick = Logic.toggleCurrentFav;
+
+                // Debug Inspector
+                document.getElementById('status').onclick = () => {
+                    UI.showModal("DEBUG INSPECTOR",
+                        `<div id="debug_dump">
+GROUP (176):
+${JSON.stringify(App.debugGroup, null, 2)}
+
+SYMBOL (163):
+${JSON.stringify(App.debugSymbol, null, 2)}
+                    </div>`
+                    );
+                };
 
                 Logic.loadSettings();
             },
@@ -430,13 +457,14 @@
                 UI.updateStar();
                 Logic.saveSettings();
 
-                // Refresh list if we are in Favorites mode to immediately reflect removal
+                // Refresh list if we are in Favorites mode 
                 if (App.showFavs) UI.renderSyms();
             },
 
             start: () => {
-                document.getElementById('status').innerText = "ONLINE";
+                document.getElementById('status').innerText = "ONLINE (DEBUG)";
                 document.getElementById('status').style.color = "#00e676";
+                document.getElementById('status').style.cursor = "pointer";
 
                 Tunnel.send(175, {}, res => {
                     const t = P(res, "trader");
@@ -462,7 +490,11 @@
                         Logic.loadSyms();
                     }
                 });
+
+                // 176: GetAccountGroupInformationReq
                 Tunnel.send(176, {}, res => {
+                    App.debugGroup = res; // Store for inspector
+
                     const cur = P(res, "depositCurrency");
                     if (cur) {
                         App.currency = cur;
@@ -540,6 +572,8 @@
                     document.getElementById('sel_sym_name').innerText = P(s, "name");
 
                     Tunnel.send(163, { symbolId: [id] }, res => {
+                        App.debugSymbol = res; // Store for Inspector
+
                         const l = P(res, "symbol");
                         if (l && l[0]) {
                             App.symbol = l[0];
@@ -557,21 +591,14 @@
 
                             UI.updateStar();
 
-                            // COMMISSION CHECK
-                            // Look for 'commission' field provided by newer API versions
-                            // Or 'minCommission'
-                            let comm = P(App.symbol, "commission"); // Usually per million?
-                            if (!comm) comm = P(App.symbol, "dealCommission"); // Sometimes dealCommission
+                            // COMMISSION CHECK (v16.1 logic attempt)
+                            // Note: Depending on API, comm might be in Group, not Symbol.
+                            // We will inspect App.debugGroup later.
+                            let comm = P(App.symbol, "commission");
+                            if (!comm) comm = P(App.symbol, "dealCommission");
 
                             const lbl = document.getElementById('comm_detect');
                             if (comm) {
-                                // Heuristic: If comm > 1000, likely per billion? Or raw?
-                                // Standard: ~30 per million. 
-                                // If comm is say "30", it means 30 units per million.
-                                // 1 Lot = 100,000. 
-                                // Cost per Lot = 30 * (100k/1m) * 2 (round trip) = 6 units.
-                                // Input is usually "6" or "600".
-                                // Let's display the raw value to validat
                                 lbl.innerText = "API: " + comm;
                             } else {
                                 lbl.innerText = "";
@@ -656,7 +683,6 @@
                     else finalPipVal = 1000;
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
-                    // Dynamic pip val for XAUUSD etc
                     else if (sym.endsWith("JPY") && App.bid) finalPipVal = 1000 / App.bid;
                     else finalPipVal = 10;
                 } else {
@@ -824,8 +850,8 @@
 
 <body>
     <div class="row" style="margin-bottom:10px">
-        <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v16.0</div>
+        <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
+            onclick="document.getElementById('status').click()">AUTO LOT<span style="color:#fff">CALC</span> v16.1</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
