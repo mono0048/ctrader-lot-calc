@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v11.1</title>
+    <title>Auto Lot Calc v12.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -328,7 +328,6 @@
                         s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
                         App.allSymbols = s;
                         UI.renderSyms();
-                        // Auto-select first if available
                         if (s.length > 0) Logic.selectSym(P(s[0], "id"));
                     }
                 });
@@ -352,12 +351,11 @@
                 if (s) {
                     document.getElementById('sel_sym_name').innerText = P(s, "name");
 
-                    // CORRECT LOGIC: Fetch detail to ensure full capability and ID
                     Tunnel.send(163, { symbolId: [id] }, res => {
                         const l = P(res, "symbol");
                         if (l && l[0]) {
                             App.symbol = l[0];
-                            App.symbol.id = id; // Ensure ID is set
+                            App.symbol.id = id;
 
                             let rxLot = P(App.symbol, "lotSize");
                             if (!rxLot) rxLot = 100000;
@@ -386,10 +384,8 @@
                     if (bid) App.bid = bid / 100000;
                     if (ask) App.ask = ask / 100000;
 
-                    // Fallback if Ask is missing
                     if (!App.ask && App.bid) App.ask = App.bid;
 
-                    // Update Price Display (Bid is standard)
                     if (App.bid) {
                         document.getElementById('lbl_price').innerText = App.bid.toFixed(3);
                         Logic.calc();
@@ -442,7 +438,6 @@
             trade: () => {
                 if (App.volCents <= 0) return;
                 if (!App.bid || !App.ask) return;
-                // Safety check for ID
                 if (!App.symbol || !App.symbol.id) {
                     UI.showModal("ERROR", "Symbol ID missing. Please re-select symbol.");
                     return;
@@ -451,28 +446,25 @@
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // --- SL CALCULATION ---
+                // --- SL CALCULATION v12.0 (Relative) ---
                 const isBuy = (App.tradeSide === 1);
                 const slPips = parseFloat(document.getElementById('in_sl').value);
                 const digits = P(App.symbol, "digits");
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
-                let slPrice = 0;
-                if (isBuy) {
-                    slPrice = App.ask - (slPips * pipSize);
-                } else {
-                    slPrice = App.bid + (slPips * pipSize);
-                }
+                // Calculate Distance Price
+                const distPrice = slPips * pipSize;
 
-                slPrice = parseFloat(slPrice.toFixed(digits));
+                // Convert to Relative Units (Base 0.00001)
+                const relSL = Math.round(distPrice / 0.00001);
 
                 const cmd = {
                     symbolId: App.symbol.id,
                     orderType: 1,
                     tradeSide: App.tradeSide,
                     volume: App.volCents,
-                    stopLoss: slPrice
+                    relativeStopLoss: relSL // Use Relative
                 };
 
                 Tunnel.send(143, cmd, res => {
@@ -487,7 +479,7 @@
                         UI.showModal("SUCCESS",
                             `<div style="font-size:18px; color:#fff">
                            Ordered <b>${sideStr} ${App.volLots.toFixed(2)}</b> Lots<br>
-                           SL: ${slPrice}
+                           SL: ${slPips} pips
                          </div>
                          <div class="disclaimer">
                              ⚠️ <b>Note:</b> cTrader app may display incorrect volume (100x).<br>
@@ -555,7 +547,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v11.1</div>
+                style="color:#fff">CALC</span> v12.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
