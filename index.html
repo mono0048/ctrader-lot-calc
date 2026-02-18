@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v10.0</title>
+    <title>Auto Lot Calc v11.0</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -13,7 +13,6 @@
             padding: 20px;
             margin: 0;
             overflow-y: auto;
-            overscroll-behavior-y: none;
         }
 
         .card {
@@ -77,7 +76,41 @@
             background: #333;
         }
 
-        /* Trade Button */
+        /* Native Select Overlay Wrapper */
+        .select-wrapper {
+            position: relative;
+            width: 100%;
+        }
+
+        .select-btn {
+            width: 100%;
+            padding: 14px;
+            background: #2a2a2a;
+            border: 1px solid #333;
+            color: #fff;
+            border-radius: 12px;
+            font-size: 18px;
+            text-align: left;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: bold;
+        }
+
+        .native-select {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        /* Trade Buttons */
         button.trade {
             border: none;
             font-weight: 800;
@@ -133,40 +166,6 @@
             background: rgba(213, 0, 0, 0.2);
             color: #ff5252;
             border-color: #ff5252;
-        }
-
-        /* Symbol Overlay */
-        #sym_overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: #121212;
-            z-index: 100;
-            display: none;
-            flex-direction: column;
-            padding: 20px;
-        }
-
-        #sym_list {
-            flex: 1;
-            overflow-y: auto;
-            margin-top: 10px;
-            overscroll-behavior-y: contain;
-            /* Prevents swipe-to-close on list scroll */
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .sym-item {
-            padding: 15px;
-            border-bottom: 1px solid #333;
-            color: #ccc;
-            font-size: 16px;
-        }
-
-        .sym-item:active {
-            background: #222;
         }
 
         .toggle-row {
@@ -248,7 +247,8 @@
             assetId: null,
             allSymbols: [],
             symbol: null,
-            price: 0,
+            bid: 0,
+            ask: 0,
             volCents: 0,
             volLots: 0,
             tradeSide: 1, // 1=Buy, 2=Sell
@@ -291,9 +291,9 @@
                 });
                 ['in_risk', 'in_sl'].forEach(id => document.getElementById(id).oninput = Logic.calc);
                 document.getElementById('btn_trade').onclick = Logic.trade;
-                document.getElementById('sym_search').oninput = (e) => UI.renderSyms(e.target.value);
 
-                // Side Toggles
+                document.getElementById('native_sym').onchange = (e) => Logic.selectSym(e.target.value);
+
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
             },
@@ -327,9 +327,9 @@
                     if (s) {
                         s.sort((a, b) => P(a, "name").localeCompare(P(b, "name")));
                         App.allSymbols = s;
-                        // Default to first if needed, or open picker
-                        if (s.length > 0) Logic.selectSym(P(s[0], "id"), P(s[0], "name"));
-                        UI.renderSyms("");
+                        UI.renderSyms();
+                        // Auto-select first if available
+                        if (s.length > 0) Logic.selectSym(P(s[0], "id"));
                     }
                 });
             },
@@ -345,32 +345,29 @@
                 btn.innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
             },
 
-            selectSym: (id, name) => {
-                // Close modal if open
-                document.getElementById('sym_overlay').style.display = "none";
-                document.getElementById('sel_sym_name').innerText = name;
+            selectSym: (id) => {
+                if (!id) return;
+                id = parseInt(id);
+                const s = App.allSymbols.find(x => P(x, "id") === id);
+                if (s) {
+                    App.symbol = s;
+                    document.getElementById('sel_sym_name').innerText = P(s, "name");
 
-                Tunnel.send(163, { symbolId: [id] }, res => {
-                    const l = P(res, "symbol");
-                    if (l && l[0]) {
-                        App.symbol = l[0];
-                        App.symbol.id = id;
+                    let rxLot = P(s, "lotSize");
+                    if (!rxLot) rxLot = 100000;
+                    // Unit fix override for calculation 
+                    if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
+                    else App.symbol._lotUnits = rxLot;
 
-                        let rxLot = P(App.symbol, "lotSize");
-                        if (!rxLot) rxLot = 100000;
-                        // Unit fix logic
-                        if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
-                        else App.symbol._lotUnits = rxLot;
+                    App.symbol._lotCents = App.symbol._lotUnits * 100;
+                    let rxStep = P(s, "stepVolume");
+                    if (!rxStep) rxStep = 100000;
+                    App.symbol._stepCents = rxStep;
 
-                        App.symbol._lotCents = App.symbol._lotUnits * 100;
-                        let rxStep = P(App.symbol, "stepVolume");
-                        if (!rxStep) rxStep = 100000;
-                        App.symbol._stepCents = rxStep;
-
-                        Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
-                        Logic.calc();
-                    }
-                });
+                    Tunnel.send(163, { symbolId: [id] });
+                    Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
+                    Logic.calc();
+                }
             },
 
             onQuote: (q) => {
@@ -378,17 +375,23 @@
                 if (App.symbol && P(App.symbol, "id") == sid) {
                     const bid = P(q, "bid");
                     const ask = P(q, "ask");
-                    // Use Bid for Sell, Ask for Buy usually, but for approximation mid or bid is fine
-                    if (bid) {
-                        App.price = bid / 100000;
-                        UI.updatePrice();
+
+                    if (bid) App.bid = bid / 100000;
+                    if (ask) App.ask = ask / 100000;
+
+                    // Fallback if Ask is missing
+                    if (!App.ask && App.bid) App.ask = App.bid;
+
+                    // Update Price Display (Bid is standard)
+                    if (App.bid) {
+                        document.getElementById('lbl_price').innerText = App.bid.toFixed(3);
                         Logic.calc();
                     }
                 }
             },
 
             calc: () => {
-                if (!App.symbol || !App.price) return;
+                if (!App.symbol || !App.bid) return;
                 const r = parseFloat(document.getElementById('in_risk').value);
                 const sl = parseFloat(document.getElementById('in_sl').value);
                 if (!r || !sl) return;
@@ -410,7 +413,7 @@
                     else finalPipVal = 1000;
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
-                    else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.price;
+                    else if (sym.endsWith("JPY")) finalPipVal = 1000 / App.bid;
                     else finalPipVal = 10;
                 } else {
                     finalPipVal = pipValQuote;
@@ -431,30 +434,56 @@
 
             trade: () => {
                 if (App.volCents <= 0) return;
+                if (!App.bid || !App.ask) return;
+
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
+
+                // --- SL CALCULATION v11.0 ---
+                const isBuy = (App.tradeSide === 1);
+                const slPips = parseFloat(document.getElementById('in_sl').value);
+                const digits = P(App.symbol, "digits");
+                const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
+                const pipSize = Math.pow(10, -pipPos);
+
+                let slPrice = 0;
+                if (isBuy) {
+                    // Buy: Open at Ask, SL below Bid (or Ask)
+                    // Typically SL is relative to entry. Entry ~ Ask.
+                    slPrice = App.ask - (slPips * pipSize);
+                } else {
+                    // Sell: Open at Bid, SL above Ask (or Bid)
+                    // Entry ~ Bid.
+                    slPrice = App.bid + (slPips * pipSize);
+                }
+
+                // Round to digits
+                slPrice = parseFloat(slPrice.toFixed(digits));
 
                 const cmd = {
                     symbolId: App.symbol.id,
                     orderType: 1,
-                    tradeSide: App.tradeSide, // 1=Buy, 2=Sell
-                    volume: App.volCents
+                    tradeSide: App.tradeSide,
+                    volume: App.volCents,
+                    stopLoss: slPrice // Add SL
                 };
 
                 Tunnel.send(143, cmd, res => {
-                    const isBuy = (App.tradeSide === 1);
-                    document.getElementById('btn_trade').innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
+                    const sideStr = isBuy ? "BUY" : "SELL";
+                    document.getElementById('btn_trade').innerText = "PLACE " + sideStr + " ORDER";
                     document.getElementById('btn_trade').disabled = false;
 
                     const err = P(res, "errorCode");
                     if (err) {
                         UI.showModal("ERROR", err);
                     } else {
-                        const sideStr = isBuy ? "BUY" : "SELL";
                         UI.showModal("SUCCESS",
-                            `<div style="font-size:18px; color:#fff">Ordered <b>${sideStr} ${App.volLots.toFixed(2)}</b> Lots</div>
+                            `<div style="font-size:18px; color:#fff">
+                           Ordered <b>${sideStr} ${App.volLots.toFixed(2)}</b> Lots<br>
+                           SL: ${slPrice}
+                         </div>
                          <div class="disclaimer">
-                             ⚠️ <b>Note:</b> cTrader app may display the volume incorrectly (e.g. 100x larger).<br>
+                             ⚠️ <b>Note:</b> cTrader app may display incorrect volume (100x).<br>
                              This is a known cTrader display bug.<br>
                              The trade <b>WAS</b> executed correctly.
                          </div>`
@@ -465,38 +494,39 @@
         };
 
         const UI = {
-            openPicker: () => {
-                document.getElementById('sym_overlay').style.display = "flex";
-                UI.renderSyms("");
-            },
             toggleFav: (force) => {
                 if (force !== undefined) App.showFavs = force;
                 else App.showFavs = !App.showFavs;
                 document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
-                UI.renderSyms(document.getElementById('sym_search').value);
+                UI.renderSyms();
             },
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.account;
                 document.getElementById('acc_bal').textContent = Math.floor(App.balance).toLocaleString() + " " + (App.currency || "");
             },
-            renderSyms: (txt) => {
-                const list = document.getElementById('sym_list');
-                list.innerHTML = "";
-                const term = (txt || "").toUpperCase();
+            renderSyms: () => {
+                const el = document.getElementById('native_sym');
+                el.innerHTML = "";
+
+                // Add Placeholder
+                const ph = document.createElement('option');
+                ph.text = "Select Pair...";
+                ph.disabled = true;
+                el.add(ph);
+
                 let matches = App.allSymbols;
-                if (term) matches = matches.filter(x => P(x, "name").toUpperCase().includes(term));
                 if (App.showFavs) matches = matches.filter(x => P(x, "favorite") === true);
 
-                matches.slice(0, 100).forEach(i => {
-                    const nav = document.createElement('div');
-                    nav.className = "sym-item";
-                    nav.innerText = P(i, "name");
-                    nav.onclick = () => Logic.selectSym(P(i, "id"), P(i, "name"));
-                    list.appendChild(nav);
+                matches.slice(0, 200).forEach(i => {
+                    const o = document.createElement('option');
+                    o.value = P(i, "id");
+                    o.text = P(i, "name");
+                    if (App.symbol && P(App.symbol, "id") === P(i, "id")) o.selected = true;
+                    el.add(o);
                 });
             },
-            updatePrice: () => document.getElementById('lbl_price').textContent = App.price.toFixed(3),
+            updatePrice: () => document.getElementById('lbl_price').textContent = App.bid.toFixed(3),
             updateCalc: (risk) => {
                 document.getElementById('out_lots').textContent = App.volLots.toFixed(2) + " Lots";
                 document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + (App.currency || "");
@@ -519,7 +549,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px;">AUTO LOT<span
-                style="color:#fff">CALC</span> v10.0</div>
+                style="color:#fff">CALC</span> v11.0</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -538,11 +568,19 @@
 
     <div class="card">
         <span class="label">Trading Pair</span>
-        <button onclick="UI.openPicker()"
-            style="margin-top:5px; background:#333; color:#fff; font-weight:bold; font-size:18px; text-align:left; display:flex; justify-content:space-between; align-items:center;">
-            <span id="sel_sym_name">SELECT SYMBOL</span>
-            <span>▼</span>
-        </button>
+
+        <div class="toggle-row" style="margin-bottom:10px;">
+            <div id="btn_all" class="toggle-btn active" onclick="UI.toggleFav(false)">ALL</div>
+            <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
+        </div>
+
+        <div class="select-wrapper">
+            <div class="select-btn">
+                <span id="sel_sym_name">SELECT SYMBOL</span>
+                <span>▼</span>
+            </div>
+            <select id="native_sym" class="native-select"></select>
+        </div>
 
         <div style="margin-top:15px; text-align:center;">
             <div class="value mono" id="lbl_price" style="font-size:28px; color:#aaa">---</div>
@@ -573,21 +611,6 @@
         <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
 
         <button id="btn_trade" class="trade buy" disabled>PLACE BUY ORDER</button>
-    </div>
-
-    <!-- Full Screen Symbol Overlay -->
-    <div id="sym_overlay">
-        <div class="row">
-            <span class="label" style="font-size:14px; color:#fff">Select Symbol</span>
-            <button onclick="document.getElementById('sym_overlay').style.display='none'"
-                style="width:auto; padding:8px 15px; background:#333;">Close</button>
-        </div>
-        <div class="toggle-row" style="margin-top:10px;">
-            <div id="btn_all" class="toggle-btn active" onclick="UI.toggleFav(false)">ALL</div>
-            <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
-        </div>
-        <input type="text" id="sym_search" placeholder="Search..." style="margin-top:5px;">
-        <div id="sym_list"></div>
     </div>
 
     <div id="modal">
