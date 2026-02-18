@@ -44,6 +44,7 @@
             letter-spacing: -0.5px;
         }
 
+        /* Wrap Row for inputs */
         .row {
             display: flex;
             justify-content: space-between;
@@ -110,7 +111,7 @@
             appearance: none;
         }
 
-        /* Star Button */
+        /* Star Button - Blue Active */
         .star-btn {
             width: 54px;
             height: 54px;
@@ -127,10 +128,11 @@
             transition: 0.2s;
         }
 
+        /* Changed to Blue per user request */
         .star-btn.active {
-            color: #ffd700;
-            border-color: #ffd700;
-            background: rgba(255, 215, 0, 0.1);
+            color: #448aff;
+            border-color: #448aff;
+            background: rgba(68, 138, 255, 0.15);
         }
 
         /* Trade Buttons */
@@ -283,13 +285,15 @@
 
         .input-card {
             flex: 1;
-            min-width: 100px;
+            min-width: 90px;
             margin: 0;
             padding: 12px;
             background: #252525;
             box-sizing: border-box;
+            border-radius: 12px;
         }
 
+        /* Ensure inputs don't overflow */
         .input-card input {
             padding: 8px 10px;
             font-size: 16px;
@@ -491,8 +495,7 @@
             },
 
             updateSLInputValueFromPips: () => {
-                // Optional: Reset to default distance if needed, or maintain value.
-                // Currently handled in convert logic or preserved.
+                // Optional
             },
 
             convertSLInput: (newMode) => {
@@ -626,6 +629,7 @@
                     else finalPipVal = 1000;
                 } else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
+                    // Dynamic pip val for XAUUSD etc
                     else if (sym.endsWith("JPY") && App.bid) finalPipVal = 1000 / App.bid;
                     else finalPipVal = 10;
                 } else {
@@ -753,18 +757,15 @@
                 let matches = App.allSymbols;
                 if (App.showFavs) matches = matches.filter(x => App.localFavs.includes(P(x, "id")));
 
+                // PERF FIX for "ALL button stuck"
                 if (matches.length === 0) {
                     el.innerHTML = "<option disabled>(No Favorites Found)</option>";
                     return;
                 }
 
-                // PERF: Batch HTML generation
-                // If too many items (>2000), browser might lag but string gen is fast.
-                // Rendering is the bottleneck. 
-                // cTrader has ~500-1000 pairs usually, crypto exchange might have more.
-                // We can use array map join.
                 const currentId = App.symbol ? App.symbol.id : null;
 
+                // Batch String Concatenation (Much faster than 1000 x appendChild)
                 const opts = matches.map(i => {
                     const id = P(i, "id");
                     const name = P(i, "name");
