@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v17.2</title>
+    <title>Auto Lot Calc v17.3</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -128,7 +128,6 @@
             transition: 0.2s;
         }
 
-        /* Changed to Blue per user request */
         .star-btn.active {
             color: #448aff;
             border-color: #448aff;
@@ -312,32 +311,10 @@
             gap: 4px;
         }
 
-        .detected-comm:hover {
-            text-decoration: underline;
-        }
-
         .detected-comm span {
             background: rgba(0, 230, 118, 0.1);
             padding: 2px 6px;
             border-radius: 4px;
-        }
-
-        .res-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 13px;
-            color: #888;
-            margin-top: 4px;
-        }
-
-        #debug_dump {
-            text-align: left;
-            font-family: monospace;
-            font-size: 10px;
-            color: #0f0;
-            white-space: pre-wrap;
-            word-break: break-all;
         }
     </style>
 
@@ -368,6 +345,8 @@
             showFavs: false,
             slMode: "pips", // "pips" or "price"
             localFavs: [], // Array of IDs
+            ready: false,
+            pendingComm: null
         };
 
         const Tunnel = {
@@ -430,10 +409,6 @@
                         if (j.showFavs !== undefined) App.showFavs = j.showFavs;
                         if (j.slMode) UI.setSLMode(j.slMode, true);
                         if (j.localFavs) App.localFavs = j.localFavs;
-
-                        if (App.showFavs && (!App.localFavs || App.localFavs.length === 0)) {
-                            App.showFavs = false;
-                        }
                     }
                 } catch (e) { }
             },
@@ -456,15 +431,10 @@
                 if (!App.symbol) return;
                 const id = App.symbol.id;
                 const idx = App.localFavs.indexOf(id);
-                if (idx >= 0) {
-                    App.localFavs.splice(idx, 1);
-                } else {
-                    App.localFavs.push(id);
-                }
+                if (idx >= 0) App.localFavs.splice(idx, 1);
+                else App.localFavs.push(id);
                 UI.updateStar();
                 Logic.saveSettings();
-
-                // Refresh list if we are in Favorites mode 
                 if (App.showFavs) UI.renderSyms();
             },
 
@@ -480,17 +450,8 @@
                         App.balance = raw / 100;
                         App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
 
-                        const commInput = document.getElementById('in_comm');
-                        if (!commInput.value || commInput.value === "600") {
-                            let defComm = 7;
-                            if (App.assetId === 6) { App.currency = "JPY"; defComm = 600; }
-                            if (App.assetId === 1) { App.currency = "USD"; defComm = 6; }
-                            commInput.value = defComm;
-                            Logic.saveSettings();
-                        } else {
-                            if (App.assetId === 6) App.currency = "JPY";
-                            if (App.assetId === 1) App.currency = "USD";
-                        }
+                        if (App.assetId === 6) App.currency = "JPY";
+                        else if (App.assetId === 1) App.currency = "USD";
 
                         UI.updateAcc();
                         Logic.loadSyms();
@@ -499,10 +460,7 @@
 
                 Tunnel.send(176, {}, res => {
                     const cur = P(res, "depositCurrency");
-                    if (cur) {
-                        App.currency = cur;
-                        UI.updateAcc();
-                    }
+                    if (cur) { App.currency = cur; UI.updateAcc(); }
                 });
             },
 
@@ -529,40 +487,28 @@
                 btn.className = isBuy ? "trade buy" : "trade sell";
                 btn.innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
 
-                if (App.slMode === "price") {
-                    Logic.updateSLInputValueFromPips();
-                }
                 Logic.calc();
-            },
-
-            updateSLInputValueFromPips: () => {
-                // Optional
             },
 
             convertSLInput: (newMode) => {
                 if (!App.bid || !App.symbol) return;
-                // Ensure safe float check for bid
                 const current = (App.tradeSide === 1) ? (App.ask || App.bid) : App.bid;
                 if (!current) return;
 
                 const val = parseFloat(document.getElementById('in_sl').value);
-                const digits = P(App.symbol, "digits");
+                const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
                 if (newMode === "price") {
-                    // Pips -> Price
                     const pips = val;
-                    let price = 0;
-                    if (App.tradeSide === 1) price = current - (pips * pipSize);
-                    else price = current + (pips * pipSize);
+                    let price = (App.tradeSide === 1) ? current - (pips * pipSize) : current + (pips * pipSize);
                     document.getElementById('in_sl').value = price.toFixed(digits);
                     document.getElementById('in_sl').step = pipSize;
                 } else {
-                    // Price -> Pips
                     const price = val;
                     const pips = Math.abs(current - price) / pipSize;
-                    document.getElementById('in_sl').value = Math.max(1, Math.round(pips));
+                    document.getElementById('in_sl').value = Math.round(pips);
                     document.getElementById('in_sl').step = 1;
                 }
             },
@@ -570,79 +516,45 @@
             selectSym: (id) => {
                 if (!id) return;
                 id = parseInt(id);
-
-                // 841 Look up (Basic Info)
                 const s = App.allSymbols.find(x => P(x, "id") === id);
 
                 if (s) {
                     document.getElementById('sel_sym_name').innerText = P(s, "name");
-
-                    // Set interim symbol from 841
                     App.symbol = s;
                     App.symbol.id = id;
+                    App.bid = 0; App.ask = 0; // Reset
 
-                    // 163 Request (Detailed Info)
                     Tunnel.send(163, { symbolId: [id] }, res => {
                         const l = P(res, "symbol");
                         if (l && l[0]) {
-                            // Merge 163 data into App.symbol
                             App.symbol = Object.assign({}, App.symbol, l[0]);
                             App.symbol.id = id;
 
                             let rxLot = P(App.symbol, "lotSize");
                             if (!rxLot) rxLot = 100000;
-                            if (rxLot > 500000) App.symbol._lotUnits = rxLot / 100;
-                            else App.symbol._lotUnits = rxLot;
-
+                            App.symbol._lotUnits = (rxLot > 500000) ? rxLot / 100 : rxLot;
                             App.symbol._lotCents = App.symbol._lotUnits * 100;
-                            let rxStep = P(App.symbol, "stepVolume");
-                            if (!rxStep) rxStep = 100000;
+                            let rxStep = P(App.symbol, "stepVolume") || 100000;
                             App.symbol._stepCents = rxStep;
 
                             UI.updateStar();
 
-                            // --- COMMISSION AUTODETECT ---
-                            // "Commission": 4500
-                            // "CommissionType": "USD_PER_MILLION_USD"
-                            // Interpretation: 4500 raw -> 45.00 USD per million
-                            // 1 Lot = 100k
-                            // Cost = 45 * (100k / 1m) = 4.5 USD
-                            // This matches user data: 0.6 Lot = 415 JPY -> 4.5 USD
-
+                            // COMMISSION
                             let comm = P(App.symbol, "commission");
                             let cType = P(App.symbol, "commissionType") || "";
-
-                            const lbl = document.getElementById('comm_detect');
-                            lbl.innerHTML = "";
+                            document.getElementById('comm_detect').innerHTML = "";
 
                             if (comm && cType.includes("PER_MILLION")) {
-                                const rawBase = comm / 100; // 4500 -> 45
-                                const perLot = rawBase / 10; // 4.5
-
-                                let finalVal = perLot;
-                                let unit = "USD";
-
-                                // Convert to Account Currency Logic
-                                // Assuming JPY Account based on context
-                                if (cType.startsWith("USD") && App.currency === "JPY") {
-                                    // Wait for Bid to exist to convert
-                                    App.pendingComm = perLot;
-                                } else if (cType.startsWith("USD") && App.currency === "USD") {
-                                    finalVal = perLot;
-                                }
-
-                                // If we can calculate immediately (matches)
-                                if (!App.pendingComm) {
-                                    Logic.setDetectedComm(finalVal); // Round Trip (Not x2)
-                                }
+                                const perLot = (comm / 100) / 10;
+                                if (cType.startsWith("USD") && App.currency === "JPY") App.pendingComm = perLot;
+                                else Logic.setDetectedComm(perLot);
                             }
-
                             Logic.calc();
                         }
                     });
 
                     Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
-                    Logic.calc(); // Init calc with basic info
+                    Logic.calc();
                 }
             },
 
@@ -662,40 +574,24 @@
                 if (App.symbol && P(App.symbol, "id") == sid) {
                     const bid = P(q, "bid");
                     const ask = P(q, "ask");
-                    const oldBid = App.bid;
 
                     if (bid) App.bid = bid / 100000;
                     if (ask) App.ask = ask / 100000;
-
                     if (!App.ask && App.bid) App.ask = App.bid;
 
                     if (App.ask && App.bid) {
-                        const digits = P(App.symbol, "digits") || 3;
+                        const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
                         const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                         const pipSize = Math.pow(10, -pipPos);
                         App.spread = (App.ask - App.bid) / pipSize;
 
-                        // Lazy Comm Update if waiting for price
                         if (App.pendingComm && App.currency === "JPY") {
-                            // USD (4.5) -> JPY
-                            // If pair is USDJPY, rate is Bid
-                            const rate = App.bid;
-                            const val = App.pendingComm * rate;
-                            Logic.setDetectedComm(val); // Round Trip (Not x2)
+                            Logic.setDetectedComm(App.pendingComm * App.bid);
                             App.pendingComm = null;
                         }
 
-                        if ((!oldBid || oldBid === 0) && App.slMode === "price") {
-                            const current = (App.tradeSide === 1) ? App.ask : App.bid;
-                            const defPips = 20;
-                            const price = (App.tradeSide === 1) ? (current - defPips * pipSize) : (current + defPips * pipSize);
-                            document.getElementById('in_sl').value = price.toFixed(digits);
-                            document.getElementById('in_sl').step = pipSize;
-                        }
-                    }
-
-                    if (App.bid) {
-                        document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`;
+                        // Display Price with correct precision
+                        document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(digits)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`;
                         Logic.calc();
                     }
                 }
@@ -708,205 +604,98 @@
                 const comm = parseFloat(document.getElementById('in_comm').value) || 0;
                 if (!r || !slInput) return;
 
-                let slPips = 0;
-                const digits = P(App.symbol, "digits");
+                const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
-                if (App.slMode === "price") {
-                    const current = (App.tradeSide === 1) ? App.ask : App.bid;
-                    if (current) {
-                        const diff = Math.abs(current - slInput);
-                        slPips = diff / pipSize;
-                    }
-                } else {
-                    slPips = slInput;
-                }
-
+                let slPips = (App.slMode === "price") ? Math.abs((App.tradeSide === 1 ? App.ask : App.bid) - slInput) / pipSize : slInput;
                 if (slPips < 0.1) slPips = 0.1;
 
                 const riskAmt = App.balance * (r / 100);
-
-                const lotUnits = App.symbol._lotUnits;
-                const pipValQuote = lotUnits * pipSize;
                 const sym = P(App.symbol, "name").toUpperCase();
                 const acc = (App.currency || "").toUpperCase();
 
                 let finalPipVal = 10;
-                if (acc === "JPY") {
-                    if (sym.includes("JPY")) finalPipVal = 1000;
-                    else finalPipVal = 1000;
-                } else if (acc === "USD") {
+                if (acc === "JPY") finalPipVal = 1000;
+                else if (acc === "USD") {
                     if (sym.endsWith("USD")) finalPipVal = 10;
-                    // Dynamic pip val for XAUUSD etc
                     else if (sym.endsWith("JPY") && App.bid) finalPipVal = 1000 / App.bid;
                     else finalPipVal = 10;
-                } else {
-                    finalPipVal = pipValQuote;
-                }
+                } else finalPipVal = App.symbol._lotUnits * pipSize;
 
-                if (!finalPipVal || isNaN(finalPipVal)) finalPipVal = 10;
-                if (finalPipVal === Infinity) finalPipVal = 10;
+                const lots = riskAmt / ((slPips * finalPipVal) + comm);
+                let cents = Math.floor((lots * App.symbol._lotCents) / (App.symbol._stepCents || 100000)) * (App.symbol._stepCents || 100000);
 
-                const costPerLot = (slPips * finalPipVal) + comm;
-                const lots = riskAmt / costPerLot;
-
-                let rawCents = lots * App.symbol._lotCents;
-                const stepCents = App.symbol._stepCents || 100000;
-                let finalCents = Math.floor(rawCents / stepCents) * stepCents;
-
-                App.volCents = finalCents;
-                App.volLots = finalCents / App.symbol._lotCents;
-
-                const totalComm = App.volLots * comm;
-                UI.updateCalc(riskAmt, slPips, totalComm);
+                App.volCents = cents;
+                App.volLots = cents / App.symbol._lotCents;
+                UI.updateCalc(riskAmt, slPips, App.volLots * comm);
             },
 
             trade: () => {
-                if (App.volCents <= 0) return;
-                if (!App.bid || !App.ask) return;
-                if (!App.symbol || !App.symbol.id) {
-                    UI.showModal("ERROR", "Symbol ID missing. Please re-select symbol.");
-                    return;
-                }
+                if (App.volCents <= 0 || !App.bid) return;
+                const isBuy = (App.tradeSide === 1);
+                const slInput = parseFloat(document.getElementById('in_sl').value);
+                const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
+                const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
+                const pipSize = Math.pow(10, -pipPos);
+
+                let finalSLPips = (App.slMode === "price") ? Math.abs((isBuy ? App.ask : App.bid) - slInput) / pipSize : slInput;
+                const relSL = Math.round((finalSLPips * pipSize) / 0.00001);
 
                 document.getElementById('btn_trade').innerText = "...";
                 document.getElementById('btn_trade').disabled = true;
 
-                // --- SL CALCULATION ---
-                const isBuy = (App.tradeSide === 1);
-                const slInput = parseFloat(document.getElementById('in_sl').value);
-                const digits = P(App.symbol, "digits");
-                const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
-                const pipSize = Math.pow(10, -pipPos);
-
-                let distPrice = 0;
-                let finalSLPips = 0;
-
-                if (App.slMode === "price") {
-                    const current = isBuy ? App.ask : App.bid;
-                    distPrice = Math.abs(current - slInput);
-                    finalSLPips = distPrice / pipSize;
-                } else {
-                    distPrice = slInput * pipSize;
-                    finalSLPips = slInput;
-                }
-
-                const relSL = Math.round(distPrice / 0.00001);
-
-                const cmd = {
-                    symbolId: App.symbol.id,
-                    orderType: 1,
-                    tradeSide: App.tradeSide,
-                    volume: App.volCents,
-                    relativeStopLoss: relSL
-                };
-
-                Tunnel.send(143, cmd, res => {
-                    const sideStr = isBuy ? "BUY" : "SELL";
-                    document.getElementById('btn_trade').innerText = "PLACE " + sideStr + " ORDER";
+                Tunnel.send(143, { symbolId: App.symbol.id, orderType: 1, tradeSide: App.tradeSide, volume: App.volCents, relativeStopLoss: relSL }, res => {
+                    document.getElementById('btn_trade').innerText = "PLACE " + (isBuy ? "BUY" : "SELL") + " ORDER";
                     document.getElementById('btn_trade').disabled = false;
-
-                    const err = P(res, "errorCode");
-                    if (err) {
-                        UI.showModal("ERROR", err);
-                    } else {
-                        UI.showModal("SUCCESS",
-                            `<div style="font-size:18px; color:#fff">
-                           Ordered <b>${sideStr} ${App.volLots.toFixed(2)}</b> Lots<br>
-                           SL: ${finalSLPips.toFixed(1)} pips
-                         </div>
-                         <div class="disclaimer">
-                             ⚠️ <b>Note:</b> cTrader app may display incorrect volume (100x).<br>
-                             This is a known cTrader display bug.<br>
-                             The trade <b>WAS</b> executed correctly.
-                         </div>`
-                        );
-                    }
+                    if (P(res, "errorCode")) UI.showModal("ERROR", P(res, "errorCode"));
+                    else UI.showModal("SUCCESS", `Ordered ${App.volLots.toFixed(2)} Lots`);
                 });
             }
         };
 
         const UI = {
-            setSLMode: (mode, skipConvert) => {
-                if (!skipConvert && App.slMode !== mode) {
-                    Logic.convertSLInput(mode);
-                }
+            setSLMode: (mode, skip) => {
+                if (!skip) Logic.convertSLInput(mode);
                 App.slMode = mode;
                 document.getElementById('btn_sl_pips').className = (mode === 'pips' ? 'sl-mode-btn active' : 'sl-mode-btn');
                 document.getElementById('btn_sl_price').className = (mode === 'price' ? 'sl-mode-btn active' : 'sl-mode-btn');
                 document.getElementById('lbl_sl').innerText = (mode === 'price' ? "SL Price" : "SL (Pips)");
-                Logic.saveSettings();
-                Logic.calc();
+                Logic.saveSettings(); Logic.calc();
             },
-            toggleFav: (force) => {
-                if (force !== undefined) App.showFavs = force;
-                else App.showFavs = !App.showFavs;
-                Logic.saveSettings(); // CHANGED FROM App.saveSettings
+            toggleFav: (f) => {
+                App.showFavs = (f !== undefined) ? f : !App.showFavs;
+                Logic.saveSettings();
                 document.getElementById('btn_all').className = App.showFavs ? 'toggle-btn' : 'toggle-btn active';
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
                 UI.renderSyms();
             },
             updateStar: () => {
-                const btn = document.getElementById('btn_star');
-                if (!App.symbol) {
-                    btn.className = "star-btn";
-                    return;
-                }
-                const isFav = App.localFavs.includes(App.symbol.id);
-                btn.className = isFav ? "star-btn active" : "star-btn";
+                if (!App.symbol) return;
+                document.getElementById('btn_star').className = App.localFavs.includes(App.symbol.id) ? "star-btn active" : "star-btn";
             },
             updateAcc: () => {
                 document.getElementById('acc_id').textContent = App.account;
-                document.getElementById('acc_bal').textContent = Math.floor(App.balance).toLocaleString() + " " + (App.currency || "");
+                document.getElementById('acc_bal').textContent = Math.floor(App.balance).toLocaleString() + " " + App.currency;
             },
             renderSyms: () => {
                 const el = document.getElementById('native_sym');
-                const ph = "<option disabled>Select Pair...</option>";
-
-                let matches = App.allSymbols;
-                if (App.showFavs) matches = matches.filter(x => App.localFavs.includes(P(x, "id")));
-
-                // PERF FIX + No Items
-                if (matches.length === 0) {
-                    el.innerHTML = "<option disabled>(No Favorites Found)</option>";
-                    return;
-                }
-
-                const currentId = App.symbol ? App.symbol.id : null;
-
-                const opts = matches.map(i => {
-                    const id = P(i, "id");
-                    const name = P(i, "name");
-                    const sel = (id === currentId) ? " selected" : "";
-                    return `<option value="${id}"${sel}>${name}</option>`;
-                }).join("");
-
-                el.innerHTML = ph + opts;
+                let matches = App.showFavs ? App.allSymbols.filter(x => App.localFavs.includes(P(x, "id"))) : App.allSymbols;
+                if (matches.length === 0) { el.innerHTML = "<option disabled>(None)</option>"; return; }
+                el.innerHTML = "<option disabled>Select Pair...</option>" + matches.map(i => `<option value="${P(i, 'id')}"${P(i, 'id') === (App.symbol ? App.symbol.id : null) ? ' selected' : ''}>${P(i, 'name')}</option>`).join("");
             },
-            updatePrice: () => document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(3)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`,
-            updateCalc: (risk, actualPips, totalComm) => {
+            updateCalc: (risk, pips, totalComm) => {
                 document.getElementById('out_lots').innerHTML = App.volLots.toFixed(2) + " Lots";
-
-                let extra = "";
-                if (actualPips) extra += `<div>(${actualPips.toFixed(1)} pips)</div>`;
-                if (totalComm) extra += `<div>Est. Comm: ${Math.round(totalComm)} ${App.currency || ""}</div>`;
-
-                if (extra) document.getElementById('out_lots').innerHTML += `<div style='font-size:12px;color:#888;margin-top:2px;'>${extra}</div>`;
-
-                document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + (App.currency || "");
+                document.getElementById('out_lots').innerHTML += `<div style='font-size:12px;color:#888;margin-top:2px;'>(${pips.toFixed(1)} pips) Est. Comm: ${Math.round(totalComm)} ${App.currency}</div>`;
+                document.getElementById('out_risk').textContent = "Risk: " + Math.floor(risk) + " " + App.currency;
                 document.getElementById('btn_trade').disabled = (App.volCents <= 0);
             },
-            showModal: (title, msg) => {
-                const m = document.getElementById('modal');
-                m.style.display = "flex";
-                m.querySelector('.modal-content').innerHTML = `
-                <h3 style="color:${title === 'SUCCESS' ? '#00e676' : '#ff5252'}">${title}</h3><div>${msg}</div>
-                <button onclick="document.getElementById('modal').style.display='none'" style="margin-top:15px;background:#444">CLOSE</button>
-            `;
+            showModal: (t, m) => {
+                const mod = document.getElementById('modal');
+                mod.style.display = "flex";
+                mod.querySelector('.modal-content').innerHTML = `<h3 style="color:${t === 'SUCCESS' ? '#00e676' : '#ff5252'}">${t}</h3><div>${m}</div><button onclick="document.getElementById('modal').style.display='none'" style="margin-top:15px;background:#444">CLOSE</button>`;
             }
         };
-
         window.onload = Logic.init;
     </script>
 </head>
@@ -914,18 +703,16 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.2</div>
+            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.3</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
     <div class="card" style="background: linear-gradient(135deg, #1e1e1e, #252525);">
         <div class="row">
-            <div class="col">
-                <span class="label">Balance</span>
+            <div class="col"><span class="label">Balance</span>
                 <div class="value mono" id="acc_bal">---</div>
             </div>
-            <div class="col" style="align-items:flex-end">
-                <span class="label">Account</span>
+            <div class="col" style="align-items:flex-end"><span class="label">Account</span>
                 <div class="value" id="acc_id" style="font-size:16px; color:#888;">---</div>
             </div>
         </div>
@@ -933,23 +720,17 @@
 
     <div class="card">
         <span class="label">Trading Pair</span>
-
-        <div class="toggle-row" style="margin-bottom:10px;">
+        <div class="toggle-row">
             <div id="btn_all" class="toggle-btn active" onclick="UI.toggleFav(false)">ALL</div>
             <div id="btn_fav" class="toggle-btn" onclick="UI.toggleFav(true)">★ FAVORITES</div>
         </div>
-
         <div class="row" style="gap:10px;">
-            <div class="select-wrapper" style="flex:1;">
-                <div class="select-btn">
-                    <span id="sel_sym_name">SELECT SYMBOL</span>
-                    <span>▼</span>
-                </div>
-                <select id="native_sym" class="native-select"></select>
+            <div class="select-wrapper">
+                <div class="select-btn"><span id="sel_sym_name">SELECT SYMBOL</span><span>▼</span></div><select
+                    id="native_sym" class="native-select"></select>
             </div>
             <div id="btn_star" class="star-btn">★</div>
         </div>
-
         <div style="margin-top:15px; text-align:center;">
             <div class="value mono" id="lbl_price" style="font-size:28px; color:#aaa">---</div>
         </div>
@@ -961,13 +742,10 @@
     </div>
 
     <div class="input-grp">
-        <div class="input-card" style="flex: 0.8">
-            <span class="label">Risk %</span>
-            <input type="number" id="in_risk" value="1.0" step="0.1">
-        </div>
+        <div class="input-card" style="flex: 0.8"><span class="label">Risk %</span><input type="number" id="in_risk"
+                value="1.0" step="0.1"></div>
         <div class="input-card" style="flex: 1.2">
-            <div class="row" style="margin-bottom:6px">
-                <span class="label" style="margin:0" id="lbl_sl">SL (Pips)</span>
+            <div class="row"><span class="label" id="lbl_sl">SL (Pips)</span>
                 <div class="sl-mode-toggle">
                     <div id="btn_sl_pips" class="sl-mode-btn active" onclick="UI.setSLMode('pips')">Pips</div>
                     <div id="btn_sl_price" class="sl-mode-btn" onclick="UI.setSLMode('price')">Price</div>
@@ -975,23 +753,17 @@
             </div>
             <input type="number" id="in_sl" value="20" step="1">
         </div>
-        <div class="input-card">
-            <span class="label">Comm/Lot</span>
-            <input type="number" id="in_comm" value="600" step="10">
+        <div class="input-card"><span class="label">Comm/Lot</span><input type="number" id="in_comm" value="600"
+                step="10">
             <div id="comm_detect" class="detected-comm"></div>
         </div>
     </div>
 
     <div class="card" style="border: 1px solid #333;">
-        <div class="row">
-            <span class="label">Volume</span>
-            <span class="label" id="out_risk">Risk: 0</span>
-        </div>
+        <div class="row"><span class="label">Volume</span><span class="label" id="out_risk">Risk: 0</span></div>
         <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
-
         <button id="btn_trade" class="trade buy" disabled>PLACE BUY ORDER</button>
     </div>
-
     <div id="modal">
         <div class="modal-content"></div>
     </div>
