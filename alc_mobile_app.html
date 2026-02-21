@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v17.3</title>
+    <title>Auto Lot Calc v17.4</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -44,7 +44,6 @@
             letter-spacing: -0.5px;
         }
 
-        /* Wrap Row for inputs */
         .row {
             display: flex;
             justify-content: space-between;
@@ -77,7 +76,6 @@
             background: #333;
         }
 
-        /* Native Select Overlay Wrapper */
         .select-wrapper {
             position: relative;
             width: 100%;
@@ -107,11 +105,8 @@
             opacity: 0;
             cursor: pointer;
             z-index: 10;
-            -webkit-appearance: none;
-            appearance: none;
         }
 
-        /* Star Button - Blue Active */
         .star-btn {
             width: 54px;
             height: 54px;
@@ -125,7 +120,6 @@
             font-size: 24px;
             color: #555;
             cursor: pointer;
-            transition: 0.2s;
         }
 
         .star-btn.active {
@@ -134,7 +128,6 @@
             background: rgba(68, 138, 255, 0.15);
         }
 
-        /* Trade Buttons */
         button.trade {
             border: none;
             font-weight: 800;
@@ -158,10 +151,8 @@
         button.trade:disabled {
             background: #333;
             color: #555;
-            box-shadow: none;
         }
 
-        /* Buy/Sell Handlers */
         .side-row {
             display: flex;
             gap: 10px;
@@ -208,7 +199,6 @@
             border-radius: 8px;
             cursor: pointer;
             text-align: center;
-            transition: 0.2s;
         }
 
         .toggle-btn.active {
@@ -255,7 +245,6 @@
             line-height: 1.4;
         }
 
-        /* SL Mode Toggle */
         .sl-mode-toggle {
             display: flex;
             font-size: 10px;
@@ -277,7 +266,6 @@
             font-weight: bold;
         }
 
-        /* Input Group Layout Fix */
         .input-grp {
             display: flex;
             gap: 10px;
@@ -316,6 +304,16 @@
             padding: 2px 6px;
             border-radius: 4px;
         }
+
+        #debug_info {
+            font-size: 9px;
+            color: #444;
+            margin-top: 20px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
     </style>
 
     <script>
@@ -341,12 +339,13 @@
             spread: 0,
             volCents: 0,
             volLots: 0,
-            tradeSide: 1, // 1=Buy, 2=Sell
+            tradeSide: 1,
             showFavs: false,
-            slMode: "pips", // "pips" or "price"
-            localFavs: [], // Array of IDs
+            slMode: "pips",
+            localFavs: [],
             ready: false,
-            pendingComm: null
+            pendingComm: null,
+            lastRawQuote: null
         };
 
         const Tunnel = {
@@ -384,17 +383,13 @@
                     } else { Tunnel.onMsg(m); }
                 });
                 ['in_risk', 'in_sl', 'in_comm'].forEach(id => {
-                    document.getElementById(id).oninput = () => {
-                        Logic.saveSettings();
-                        Logic.calc();
-                    };
+                    document.getElementById(id).oninput = () => { Logic.saveSettings(); Logic.calc(); };
                 });
                 document.getElementById('btn_trade').onclick = Logic.trade;
                 document.getElementById('native_sym').onchange = (e) => Logic.selectSym(e.target.value);
                 document.getElementById('side_buy').onclick = () => Logic.setSide(1);
                 document.getElementById('side_sell').onclick = () => Logic.setSide(2);
                 document.getElementById('btn_star').onclick = Logic.toggleCurrentFav;
-
                 Logic.loadSettings();
             },
 
@@ -446,18 +441,14 @@
                     const t = P(res, "trader");
                     if (t) {
                         App.account = P(t, "login");
-                        const raw = P(t, "balance") || 0;
-                        App.balance = raw / 100;
+                        App.balance = (P(t, "balance") || 0) / 100;
                         App.assetId = P(t, "depositAssetId") || P(res, "depositAssetId");
-
                         if (App.assetId === 6) App.currency = "JPY";
                         else if (App.assetId === 1) App.currency = "USD";
-
                         UI.updateAcc();
                         Logic.loadSyms();
                     }
                 });
-
                 Tunnel.send(176, {}, res => {
                     const cur = P(res, "depositCurrency");
                     if (cur) { App.currency = cur; UI.updateAcc(); }
@@ -482,32 +473,25 @@
                 const isBuy = (s === 1);
                 document.getElementById('side_buy').className = isBuy ? "side-btn buy active" : "side-btn";
                 document.getElementById('side_sell').className = !isBuy ? "side-btn sell active" : "side-btn";
-
-                const btn = document.getElementById('btn_trade');
-                btn.className = isBuy ? "trade buy" : "trade sell";
-                btn.innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
-
+                document.getElementById('btn_trade').className = isBuy ? "trade buy" : "trade sell";
+                document.getElementById('btn_trade').innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
                 Logic.calc();
             },
 
             convertSLInput: (newMode) => {
                 if (!App.bid || !App.symbol) return;
                 const current = (App.tradeSide === 1) ? (App.ask || App.bid) : App.bid;
-                if (!current) return;
-
                 const val = parseFloat(document.getElementById('in_sl').value);
                 const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
                 if (newMode === "price") {
-                    const pips = val;
-                    let price = (App.tradeSide === 1) ? current - (pips * pipSize) : current + (pips * pipSize);
+                    let price = (App.tradeSide === 1) ? current - (val * pipSize) : current + (val * pipSize);
                     document.getElementById('in_sl').value = price.toFixed(digits);
                     document.getElementById('in_sl').step = pipSize;
                 } else {
-                    const price = val;
-                    const pips = Math.abs(current - price) / pipSize;
+                    const pips = Math.abs(current - val) / pipSize;
                     document.getElementById('in_sl').value = Math.round(pips);
                     document.getElementById('in_sl').step = 1;
                 }
@@ -522,7 +506,7 @@
                     document.getElementById('sel_sym_name').innerText = P(s, "name");
                     App.symbol = s;
                     App.symbol.id = id;
-                    App.bid = 0; App.ask = 0; // Reset
+                    App.bid = 0; App.ask = 0;
 
                     Tunnel.send(163, { symbolId: [id] }, res => {
                         const l = P(res, "symbol");
@@ -530,12 +514,10 @@
                             App.symbol = Object.assign({}, App.symbol, l[0]);
                             App.symbol.id = id;
 
-                            let rxLot = P(App.symbol, "lotSize");
-                            if (!rxLot) rxLot = 100000;
+                            let rxLot = P(App.symbol, "lotSize") || 100000;
                             App.symbol._lotUnits = (rxLot > 500000) ? rxLot / 100 : rxLot;
                             App.symbol._lotCents = App.symbol._lotUnits * 100;
-                            let rxStep = P(App.symbol, "stepVolume") || 100000;
-                            App.symbol._stepCents = rxStep;
+                            App.symbol._stepCents = P(App.symbol, "stepVolume") || 100000;
 
                             UI.updateStar();
 
@@ -552,7 +534,6 @@
                             Logic.calc();
                         }
                     });
-
                     Tunnel.send(601, { symbolId: [id], subscribeToSpotTimestamp: true });
                     Logic.calc();
                 }
@@ -562,25 +543,24 @@
                 const v = Math.round(val);
                 const lbl = document.getElementById('comm_detect');
                 lbl.innerHTML = `<span>⚡ Detected: ${v}/Lot</span>`;
-                lbl.onclick = () => {
-                    document.getElementById('in_comm').value = v;
-                    Logic.saveSettings();
-                    Logic.calc();
-                };
+                lbl.onclick = () => { document.getElementById('in_comm').value = v; Logic.saveSettings(); Logic.calc(); };
             },
 
             onQuote: (q) => {
                 const sid = P(q, "symbolId");
                 if (App.symbol && P(App.symbol, "id") == sid) {
-                    const bid = P(q, "bid");
-                    const ask = P(q, "ask");
+                    const bidRaw = P(q, "bid");
+                    const askRaw = P(q, "ask");
+                    const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
 
-                    if (bid) App.bid = bid / 100000;
-                    if (ask) App.ask = ask / 100000;
+                    // Debug Recording
+                    App.lastRawQuote = { bid: bidRaw, ask: askRaw, digits: digits };
+
+                    if (bidRaw) App.bid = bidRaw / 100000;
+                    if (askRaw) App.ask = askRaw / 100000;
                     if (!App.ask && App.bid) App.ask = App.bid;
 
                     if (App.ask && App.bid) {
-                        const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
                         const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                         const pipSize = Math.pow(10, -pipPos);
                         App.spread = (App.ask - App.bid) / pipSize;
@@ -590,8 +570,8 @@
                             App.pendingComm = null;
                         }
 
-                        // Display Price with correct precision
                         document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(digits)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`;
+                        document.getElementById('debug_txt').innerText = `ID:${sid} Digits:${digits} RawBid:${bidRaw}`;
                         Logic.calc();
                     }
                 }
@@ -703,7 +683,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.3</div>
+            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.4</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
@@ -764,6 +744,12 @@
         <div class="value mono" id="out_lots" style="font-size:36px; color:#448aff; margin:10px 0;">0.00 Lots</div>
         <button id="btn_trade" class="trade buy" disabled>PLACE BUY ORDER</button>
     </div>
+
+    <div id="debug_info">
+        <div>DEBUG MODE</div>
+        <div id="debug_txt">Waiting for symbol...</div>
+    </div>
+
     <div id="modal">
         <div class="modal-content"></div>
     </div>
