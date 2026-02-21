@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Auto Lot Calc v17.4</title>
+    <title>Auto Lot Calc v17.5</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
     <style>
         body {
@@ -475,6 +475,8 @@
                 document.getElementById('side_sell').className = !isBuy ? "side-btn sell active" : "side-btn";
                 document.getElementById('btn_trade').className = isBuy ? "trade buy" : "trade sell";
                 document.getElementById('btn_trade').innerText = isBuy ? "PLACE BUY ORDER" : "PLACE SELL ORDER";
+
+                UI.updatePriceDisplay();
                 Logic.calc();
             },
 
@@ -553,7 +555,6 @@
                     const askRaw = P(q, "ask");
                     const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
 
-                    // Debug Recording
                     App.lastRawQuote = { bid: bidRaw, ask: askRaw, digits: digits };
 
                     if (bidRaw) App.bid = bidRaw / 100000;
@@ -570,7 +571,7 @@
                             App.pendingComm = null;
                         }
 
-                        document.getElementById('lbl_price').innerHTML = `${App.bid.toFixed(digits)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`;
+                        UI.updatePriceDisplay();
                         document.getElementById('debug_txt').innerText = `ID:${sid} Digits:${digits} RawBid:${bidRaw}`;
                         Logic.calc();
                     }
@@ -588,7 +589,8 @@
                 const pipPos = P(App.symbol, "pipPosition") || (digits === 3 ? 2 : 4);
                 const pipSize = Math.pow(10, -pipPos);
 
-                let slPips = (App.slMode === "price") ? Math.abs((App.tradeSide === 1 ? App.ask : App.bid) - slInput) / pipSize : slInput;
+                const current = (App.tradeSide === 1) ? (App.ask || App.bid) : App.bid;
+                let slPips = (App.slMode === "price") ? Math.abs(current - slInput) / pipSize : slInput;
                 if (slPips < 0.1) slPips = 0.1;
 
                 const riskAmt = App.balance * (r / 100);
@@ -650,6 +652,17 @@
                 document.getElementById('btn_fav').className = App.showFavs ? 'toggle-btn active' : 'toggle-btn';
                 UI.renderSyms();
             },
+
+            updatePriceDisplay: () => {
+                if (!App.bid) return;
+                const digits = P(App.symbol, "digits") || (P(App.symbol, "name").includes("JPY") ? 3 : 5);
+                // Display Ask for BUY, Bid for SELL
+                const price = (App.tradeSide === 1) ? (App.ask || App.bid) : App.bid;
+                const sideLabel = (App.tradeSide === 1) ? "<span style='color:#448aff;font-size:10px;vertical-align:middle;margin-right:5px'>ASK</span>" : "<span style='color:#ff5252;font-size:10px;vertical-align:middle;margin-right:5px'>BID</span>";
+
+                document.getElementById('lbl_price').innerHTML = `${sideLabel}${price.toFixed(digits)} <span style='font-size:12px;color:#888;margin-left:10px'>Spread: ${App.spread.toFixed(1)}</span>`;
+            },
+
             updateStar: () => {
                 if (!App.symbol) return;
                 document.getElementById('btn_star').className = App.localFavs.includes(App.symbol.id) ? "star-btn active" : "star-btn";
@@ -683,7 +696,7 @@
 <body>
     <div class="row" style="margin-bottom:10px">
         <div style="font-weight:900; font-size:18px; color:#448aff; letter-spacing:1px; cursor:pointer;"
-            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.4</div>
+            onclick="location.reload()">AUTO LOT<span style="color:#fff">CALC</span> v17.5</div>
         <div id="status" style="font-size:10px; font-weight:bold; color:#555">OFFLINE</div>
     </div>
 
