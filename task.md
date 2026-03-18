@@ -30,3 +30,13 @@
         - [ ] Search specifically for "EventBasedPluginJavaScriptBridge"
         - [ ] Verify Connection w/ Callback Injection
         - [ ] Verify Trading functionality
+        - [x] Inspect `window.android` Deeply (Found `webview` property)
+        - [ ] Inspect `window.android.webview` (The likely bridge)
+        - [ ] Verify Trading functionality
+        - [x] Verify Connection (Inspector v20: Full Dump - Success, but silence)
+        - [x] Verify Connection (Inspector v38: Tunnel Payload - Object Wrap Succeeded!)
+        - [ ] Verify Trading functionality (App v1.0: Fetch Account & Symbols)
+        - [ ] Verify Trading functionality (App v2.0: Full Calculator Logic)
+        - [x] Verify Connection (Inspector v23: Bridge Hook - Silent)
+        - [ ] Verify Connection (Inspector v24: Stack Trace - Identify Downlink)
+        - [ ] Verify Trading functionality

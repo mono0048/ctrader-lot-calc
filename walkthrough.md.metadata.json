@@ -1,6 +1,6 @@
 {
   "artifactType": "ARTIFACT_TYPE_WALKTHROUGH",
-  "summary": "Updated walkthrough with instructions for the new SDK-based WebView Plugin. Includes deployment steps for Netlify/GitHub Pages.",
-  "updatedAt": "2026-02-17T00:40:32.481967800Z",
-  "version": "1"
+  "summary": "Documentation of the reverse-engineered App v4.1 logic.",
+  "updatedAt": "2026-02-17T07:20:40.555703300Z",
+  "version": "2"
 }

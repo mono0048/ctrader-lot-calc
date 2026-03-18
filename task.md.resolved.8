@@ -24,7 +24,7 @@
 - [/] デプロイと動作検証 <!-- id: 6 -->
     - [ ] Webホスティング (Netlify/GitHub Pages) へのアップロード
     - [ ] 実機 (cTrader Mobile) での動作確認
-        - [x] Analyze `handlePluginEvent` source (Native confirmed)
+        - [x] Analyze [handlePluginEvent](file:///C:/Users/jf08/.gemini/antigravity/brain/4ed089b8-5f02-4200-a967-79e572b525cf/alc_sdk.html#63-64) source (Native confirmed)
         - [x] Verify Native Return Value & Universal Event Trap (Failed)
         - [x] Fuzz Protocol Envelopes (Failed)
         - [ ] Search specifically for "EventBasedPluginJavaScriptBridge"
@@ -34,9 +34,5 @@
         - [ ] Inspect `window.android.webview` (The likely bridge)
         - [ ] Verify Trading functionality
         - [x] Verify Connection (Inspector v20: Full Dump - Success, but silence)
-        - [x] Verify Connection (Inspector v38: Tunnel Payload - Object Wrap Succeeded!)
-        - [ ] Verify Trading functionality (App v1.0: Fetch Account & Symbols)
-        - [ ] Verify Trading functionality (App v2.0: Full Calculator Logic)
-        - [x] Verify Connection (Inspector v23: Bridge Hook - Silent)
-        - [ ] Verify Connection (Inspector v24: Stack Trace - Identify Downlink)
+        - [ ] Verify Connection (Inspector v21: Full Handshake + Auth)
         - [ ] Verify Trading functionality
